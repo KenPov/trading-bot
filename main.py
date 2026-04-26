@@ -35,6 +35,14 @@ def run_once():
         return
 
     last_signals = load_last_signals()
+    
+    # If this is the FIRST run (the file doesn't exist yet), send a Telegram confirmation
+    if not os.path.exists(SIGNAL_TRACKER_FILE):
+        print("First run detected! Sending startup confirmation to Telegram...")
+        asyncio.run(send_startup_message(config.ASSETS))
+        # Create the file immediately so it doesn't send again next time
+        save_last_signals({}) 
+
     new_signals_found = False
     
     for symbol in config.ASSETS:
