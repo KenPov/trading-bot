@@ -3,9 +3,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Hardcoding the exact values as fallbacks in case Hugging Face Variables fail
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8736079728:AAEF3i89antnk-dpo_1Bz86JHxyP8OnTBCA")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003708562178")
+# These will now be pulled safely from GitHub Actions Secrets
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # Bot configuration
 # Using XAUT/USDT (Tether Gold) because crypto exchanges track Gold using this token
