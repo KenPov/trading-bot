@@ -3,9 +3,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# These will now be pulled safely from GitHub Actions Secrets
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+# Hardcoded Telegram credentials
+TELEGRAM_BOT_TOKEN = "8736079728:AAEF3i89antnk-dpo_1Bz86JHxyP8OnTBCA"
+TELEGRAM_CHAT_ID = "-1003708562178"
 
 # Bot configuration
 # Using XAUT/USDT (Tether Gold) because crypto exchanges track Gold using this token
