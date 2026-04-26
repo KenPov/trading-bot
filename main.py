@@ -1,4 +1,5 @@
 import time
+# Version 2.0 - Jumpstart Timer
 import asyncio
 import config
 import json
@@ -36,9 +37,8 @@ def run_once():
 
     last_signals = load_last_signals()
     
-    # FORCED: Sending startup confirmation to Telegram to prove it works!
-    print("Sending startup confirmation to Telegram...")
-    asyncio.run(send_startup_message(config.ASSETS))
+    # We remove the forced message now that we know it works!
+    # The bot will now only alert you when a REAL setup is found.
 
     new_signals_found = False
     
