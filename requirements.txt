@@ -1,0 +1,9 @@
+ccxt
+pandas
+smartmoneyconcepts
+python-telegram-bot
+python-dotenv
+schedule
+pandas-ta-classic
+flask
+requests
