@@ -17,9 +17,9 @@ async def send_signal(signal_data):
         f"**Asset:** {signal_data['symbol']}\n"
         f"**Timeframe:** {signal_data['timeframe']}\n"
         f"**Trigger:** {signal_data['setup_type']} ({direction})\n\n"
-        f"{emoji} **Entry Price:** {signal_data['entry_price']:.2f}\n"
-        f"🎯 **Take Profit (TP):** {signal_data['tp']:.2f}\n"
-        f"🛡️ **Stop Loss (SL):** {signal_data['sl']:.2f}\n\n"
+        f"{emoji} **Entry Price:** {signal_data['entry_price']:.5f}\n"
+        f"🎯 **Take Profit (TP):** {signal_data['tp']:.5f}\n"
+        f"🛡️ **Stop Loss (SL):** {signal_data['sl']:.5f}\n\n"
         f"⚠️ _Trade at your own risk. Use proper risk management._"
     )
     
