@@ -6,7 +6,7 @@ async def send_signal(signal_data):
     Sends the formatted SMC signal to the telegram group.
     """
     if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
-        print("Telegram bot token or chat ID is missing. Signal not sent.")
+        print("❌ ERROR: Telegram Bot Token or Chat ID is MISSING in GitHub Secrets!")
         return
     
     direction = signal_data['direction']
@@ -47,6 +47,7 @@ async def send_startup_message(assets_list):
     Sends a test message on bot startup to verify Kraken and Telegram connection.
     """
     if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
+        print("❌ ERROR: Telegram Bot Token or Chat ID is MISSING in GitHub Secrets!")
         return
         
     asset_str = ", ".join(assets_list)

@@ -4,7 +4,7 @@ import asyncio
 import config
 import json
 import os
-from smc_analyzer import fetch_data, analyze_smc
+from smc_analyzer import fetch_data, analyze_smc, get_active_usdt_markets
 from telegram_notifier import send_signal, send_startup_message
 
 # Signal tracking file for GitHub Actions persistence
@@ -28,8 +28,8 @@ def run_once():
     
     # Connection Test
     try:
-        print(f"Testing connection to Kraken for {config.ASSETS[0]}...")
-        fetch_data(config.ASSETS[0], "15m", 5)
+        print(f"Testing connection to Kraken...")
+        fetch_data("BTC/USDT", "15m", 5)
         print("✅ Kraken Connection: SUCCESSFUL")
     except Exception as e:
         print(f"❌ Kraken Connection: FAILED! Error: {e}")
@@ -42,7 +42,16 @@ def run_once():
 
     new_signals_found = False
     
-    for symbol in config.ASSETS:
+    # Dynamically fetch markets
+    try:
+        print("Fetching active USDT markets from Kraken...")
+        assets = get_active_usdt_markets()
+        print(f"Found {len(assets)} active USDT pairs to scan.")
+    except Exception as e:
+        print(f"❌ Failed to fetch markets: {e}")
+        return
+
+    for symbol in assets:
         # Determine HTF Bias (highest timeframe in the list)
         htf = config.TIMEFRAMES[-1]
         htf_bias = "NEUTRAL"

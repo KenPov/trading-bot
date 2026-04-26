@@ -4,9 +4,18 @@ import pandas_ta_classic as ta
 from smartmoneyconcepts import smc
 import config
 
+def get_active_usdt_markets():
+    exchange = ccxt.kraken()
+    markets = exchange.load_markets()
+    # Filter for USDT pairs
+    usdt_pairs = [symbol for symbol in markets if '/USDT' in symbol]
+    
+    if hasattr(config, 'MAX_COINS') and config.MAX_COINS:
+        return usdt_pairs[:config.MAX_COINS]
+    return usdt_pairs
+
 def fetch_data(symbol, timeframe, limit):
     # Using Kraken - It is US-based and will NOT block GitHub Actions.
-    # It has very accurate data for BTC, ETH, BNB, and Gold (XAUT).
     exchange = ccxt.kraken({
         'enableRateLimit': True,
     })
@@ -31,62 +40,50 @@ def get_market_bias(bos_choch_df):
             
     return "NEUTRAL"
 
-def check_rsi_divergence(df, swing_df, direction):
-    """
-    Checks if there is a momentum divergence at the current price
-    Direction LONG: Price Lower Low (or equal) while RSI Higher Low
-    Direction SHORT: Price Higher High (or equal) while RSI Lower High
-    """
-    try:
-        current_rsi = df['rsi'].iloc[-1]
-        current_px = df['close'].iloc[-1]
-        
-        # We look back at the last few structural swings to compare
-        if direction == "LONG":
-            # Filter for swing lows (-1)
-            swings = swing_df[swing_df['HighLow'] == -1].tail(config.DIVERGENCE_LOOKBACK)
-            for idx, row in swings.iterrows():
-                # Compare current price/rsi to this past swing point
-                prev_rsi = df.loc[idx, 'rsi']
-                prev_px = df.loc[idx, 'low']
-                
-                # Bullish Divergence: Price is lower or same, but RSI is stronger (higher)
-                if current_px <= prev_px and current_rsi > prev_rsi:
-                    return True
-        else:
-            # Filter for swing highs (1)
-            swings = swing_df[swing_df['HighLow'] == 1].tail(config.DIVERGENCE_LOOKBACK)
-            for idx, row in swings.iterrows():
-                prev_rsi = df.loc[idx, 'rsi']
-                prev_px = df.loc[idx, 'high']
-                
-                # Bearish Divergence: Price is higher or same, but RSI is weaker (lower)
-                if current_px >= prev_px and current_rsi < prev_rsi:
-                    return True
-    except Exception:
-        pass
-    
-    return False
-
 def analyze_smc(df, symbol, timeframe, external_bias=None):
     """
-    Given a dataframe, calculate SMC indicators and find the 'Perfect best entry'
+    Given a dataframe, calculate the Golden Confluence Strategy (EMA, BB, MACD, RSI, SMC)
+    for the best entries on all coins.
     """
-    
+    if len(df) < 50: # Minimum data check
+        return {"setup_found": False}
+
     try:
-        # Calculate RSI first
+        # Calculate Indicators
+        # 1. EMA 200
+        df['ema_200'] = ta.ema(df['close'], length=config.EMA_PERIOD)
+        
+        # 2. Bollinger Bands
+        bbands = ta.bbands(df['close'], length=config.BB_PERIOD, std=config.BB_STD_DEV)
+        if bbands is None or bbands.empty:
+            return {"setup_found": False}
+            
+        bbl_col = [col for col in bbands.columns if 'BBL' in col][0]
+        bbu_col = [col for col in bbands.columns if 'BBU' in col][0]
+        df['bbl'] = bbands[bbl_col]
+        df['bbu'] = bbands[bbu_col]
+        
+        # 3. RSI
         df['rsi'] = ta.rsi(df['close'], length=config.RSI_PERIOD)
         
-        fvg_df = smc.fvg(df)
+        # 4. MACD
+        macd = ta.macd(df['close'], fast=config.MACD_FAST, slow=config.MACD_SLOW, signal=config.MACD_SIGNAL)
+        if macd is None or macd.empty:
+            return {"setup_found": False}
+            
+        macd_col = [col for col in macd.columns if col.startswith('MACD_')][0]
+        macds_col = [col for col in macd.columns if col.startswith('MACDs_')][0]
+        df['macd'] = macd[macd_col]
+        df['macd_signal'] = macd[macds_col]
+        
+        # 5. SMC Bias Context
         swing_highs_lows = smc.swing_highs_lows(df)
-        ob_df = smc.ob(df, swing_highs_lows)
         bos_choch_df = smc.bos_choch(df, swing_highs_lows)
         
-        # Use HTF bias if provided (MTF Confirmation), otherwise calculate from current DF
         bias = external_bias if external_bias else get_market_bias(bos_choch_df)
         
     except Exception as e:
-        print(f"Error calculating SMC/RSI for {symbol} {timeframe}: {e}")
+        print(f"Error calculating indicators for {symbol} {timeframe}: {e}")
         return {"setup_found": False}
         
     current_px = df.iloc[-1]['close']
@@ -98,58 +95,50 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
     entry_price = 0
     sl = 0
     tp = 0
-    divergence_confirmed = False
     signal_id = ""
 
-    # "Perfect Best Entry" Rules:
-    # 1. OB must be unmitigated
-    # 2. OB direction MUST align with the market bias
-    # 3. RSI Divergence MUST be present (The momentum filter)
-
     try:
-        recent_obs = ob_df.iloc[-25:] 
-        for i in range(len(recent_obs)-1, -1, -1):
-            row = recent_obs.iloc[i]
+        # Check the last 3 candles for the trigger (to catch crossovers)
+        for i in range(-3, 0):
+            row = df.iloc[i]
+            prev_row = df.iloc[i-1]
             
-            if 'OB' in row and row['OB'] != 0 and ('Mitigated' in row and row['Mitigated'] == 0):
-                ob_dir = "LONG" if row['OB'] == 1 else "SHORT"
+            # LONG SETUP CONFLUENCE
+            is_uptrend = row['close'] > row['ema_200']
+            touched_lower_bb = row['low'] <= row['bbl'] or prev_row['low'] <= prev_row['bbl']
+            macd_bull_cross = row['macd'] > row['macd_signal'] and prev_row['macd'] <= prev_row['macd_signal']
+            rsi_oversold_recovery = row['rsi'] < config.RSI_OVERSOLD or prev_row['rsi'] < config.RSI_OVERSOLD
+            
+            if is_uptrend and touched_lower_bb and macd_bull_cross and rsi_oversold_recovery:
+                setup_found = True
+                direction = "LONG"
+                setup_type = "Golden Confluence (EMA200 + BB + MACD + RSI)"
+                entry_price = current_px
+                signal_id = f"GOLDEN_{df.index[i]}_LONG_{symbol}_{timeframe}"
+                sl = row['bbl'] * 0.995 # SL slightly below Bollinger Band
+                risk = entry_price - sl
+                tp = entry_price + (risk * config.RISK_REWARD_RATIO)
+                break
                 
-                # 1. TREND FILTER
-                if ob_dir == "LONG" and bias != "BULLISH":
-                    continue 
-                if ob_dir == "SHORT" and bias != "BEARISH":
-                    continue 
-
-                top = row['Top']
-                bottom = row['Bottom']
+            # SHORT SETUP CONFLUENCE
+            is_downtrend = row['close'] < row['ema_200']
+            touched_upper_bb = row['high'] >= row['bbu'] or prev_row['high'] >= prev_row['bbu']
+            macd_bear_cross = row['macd'] < row['macd_signal'] and prev_row['macd'] >= prev_row['macd_signal']
+            rsi_overbought_recovery = row['rsi'] > config.RSI_OVERBOUGHT or prev_row['rsi'] > config.RSI_OVERBOUGHT
+            
+            if is_downtrend and touched_upper_bb and macd_bear_cross and rsi_overbought_recovery:
+                setup_found = True
+                direction = "SHORT"
+                setup_type = "Golden Confluence (EMA200 + BB + MACD + RSI)"
+                entry_price = current_px
+                signal_id = f"GOLDEN_{df.index[i]}_SHORT_{symbol}_{timeframe}"
+                sl = row['bbu'] * 1.005 # SL slightly above Bollinger Band
+                risk = sl - entry_price
+                tp = entry_price - (risk * config.RISK_REWARD_RATIO)
+                break
                 
-                # 2. PRICE ACTION (Are we in the zone?)
-                if bottom <= current_px <= top:
-                    # 3. MOMENTUM FILTER (The RSI Divergence check)
-                    divergence_confirmed = check_rsi_divergence(df, swing_highs_lows, ob_dir)
-                    
-                    if divergence_confirmed:
-                        setup_found = True
-                        setup_type = f"Perfect SMC Entry (Bias: {bias} + RSI Divergence)"
-                        direction = ob_dir
-                        entry_price = current_px
-                        signal_id = f"PERFECT_{recent_obs.index[i]}_{direction}_{symbol}_{timeframe}"
-                        
-                        if direction == "LONG":
-                            sl = bottom * 0.998
-                            risk = entry_price - sl
-                            tp = entry_price + (risk * config.RISK_REWARD_RATIO)
-                        else:
-                            sl = top * 1.002
-                            risk = sl - entry_price
-                            tp = entry_price - (risk * config.RISK_REWARD_RATIO)
-                        break
-                    else:
-                        # Potential setup but no momentum confirmation yet
-                        pass
-
     except Exception as e:
-        print(f"Error parsing SMC output: {e}")
+        print(f"Error in confluence logic for {symbol}: {e}")
         
     return {
         "setup_found": setup_found,
@@ -158,7 +147,6 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
         "entry_price": entry_price,
         "sl": sl,
         "tp": tp,
-        "divergence_confirmed": divergence_confirmed,
         "signal_id": signal_id,
         "current_time": current_time,
         "bias": bias
