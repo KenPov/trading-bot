@@ -26,6 +26,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Trading Bot Scan
+        env:
+          PYTHONIOENCODING: utf-8
         run: python -u main.py
 
       - name: Save Signal State
