@@ -4,7 +4,7 @@ import config
 import json
 import os
 from smc_analyzer import fetch_data, analyze_smc
-from telegram_notifier import send_signal
+from telegram_notifier import send_signal, send_startup_message
 
 # Signal tracking file for GitHub Actions persistence
 SIGNAL_TRACKER_FILE = "last_signals.json"
@@ -24,6 +24,16 @@ def save_last_signals(signals):
 
 def run_once():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Starting Scan...")
+    
+    # Connection Test
+    try:
+        print(f"Testing connection to Binance for {config.ASSETS[0]}...")
+        fetch_data(config.ASSETS[0], "15m", 5)
+        print("✅ Binance Connection: SUCCESSFUL")
+    except Exception as e:
+        print(f"❌ Binance Connection: FAILED! Error: {e}")
+        return
+
     last_signals = load_last_signals()
     new_signals_found = False
     
