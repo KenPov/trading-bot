@@ -29,8 +29,9 @@ def run_once():
     # Connection Test
     try:
         print(f"Testing connection to Kraken...")
-        fetch_data("BTC/USDT", "15m", 5)
-        print("✅ Kraken Connection: SUCCESSFUL")
+        btc_df = fetch_data("BTC/USDT", "15m", 5)
+        btc_price = btc_df.iloc[-1]['close']
+        print(f"✅ Kraken Connection: SUCCESSFUL. BTC Price: ${btc_price:.2f}")
     except Exception as e:
         print(f"❌ Kraken Connection: FAILED! Error: {e}")
         return
@@ -50,6 +51,12 @@ def run_once():
     except Exception as e:
         print(f"❌ Failed to fetch markets: {e}")
         return
+        
+    # Send Heartbeat message
+    try:
+        asyncio.run(send_startup_message(len(assets), btc_price))
+    except Exception as e:
+        print(f"Failed to send heartbeat: {e}")
 
     for symbol in assets:
         # Determine HTF Bias (highest timeframe in the list)

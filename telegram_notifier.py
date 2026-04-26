@@ -42,7 +42,7 @@ async def send_signal(signal_data):
     except Exception as e:
         print(f"Failed to send Telegram message: {e}")
 
-async def send_startup_message(assets_list):
+async def send_startup_message(assets_count, btc_price):
     """
     Sends a test message on bot startup to verify Kraken and Telegram connection.
     """
@@ -50,14 +50,12 @@ async def send_startup_message(assets_list):
         print("❌ ERROR: Telegram Bot Token or Chat ID is MISSING in GitHub Secrets!")
         return
         
-    asset_str = ", ".join(assets_list)
     message = (
-        f"✅ *SMC Bot Successfully Started!*\n\n"
+        f"✅ *SMC Scanner Heartbeat*\n\n"
         f"🌐 **Exchange:** Kraken\n"
-        f"📊 **Tracking Assets:** {asset_str}\n"
-        f"📡 Connection to Data Provider: *SUCCESS*\n"
-        f"🤖 Notification System: *SUCCESS*\n\n"
-        f"_The bot is now scanning 24/7 for Perfect Entries._"
+        f"📊 **Tracking Assets:** {assets_count} coins\n"
+        f"💰 **Current BTC Price:** ${btc_price:,.2f}\n"
+        f"📡 **Status:** Scanning for Perfect Entries...\n"
     )
     
     url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
