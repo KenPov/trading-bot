@@ -5,9 +5,9 @@ from smartmoneyconcepts import smc
 import config
 
 def fetch_data(symbol, timeframe, limit):
-    # Using Binance (The gold standard for crypto data)
-    # GitHub Actions are not blocked by Binance geo-restrictions
-    exchange = ccxt.binance({
+    # Using Kraken - It is US-based and will NOT block GitHub Actions.
+    # It has very accurate data for BTC, ETH, BNB, and Gold (XAUT).
+    exchange = ccxt.kraken({
         'enableRateLimit': True,
     })
     

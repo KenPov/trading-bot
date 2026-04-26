@@ -27,11 +27,11 @@ def run_once():
     
     # Connection Test
     try:
-        print(f"Testing connection to Binance for {config.ASSETS[0]}...")
+        print(f"Testing connection to Kraken for {config.ASSETS[0]}...")
         fetch_data(config.ASSETS[0], "15m", 5)
-        print("✅ Binance Connection: SUCCESSFUL")
+        print("✅ Kraken Connection: SUCCESSFUL")
     except Exception as e:
-        print(f"❌ Binance Connection: FAILED! Error: {e}")
+        print(f"❌ Kraken Connection: FAILED! Error: {e}")
         return
 
     last_signals = load_last_signals()
