@@ -14,7 +14,7 @@ TIMEFRAMES = ["15m", "1h"]
 
 LOOKBACK_CANDLES = 250 # Increased to ensure 200 EMA calculation has enough data
 RISK_REWARD_RATIO = 2.0
-CHECK_INTERVAL_SECONDS = 300 # Scans every 5 minutes
+CHECK_INTERVAL_SECONDS = 120 # Scans every 2 minutes
 
 # Golden Confluence Strategy Settings
 EMA_PERIOD = 200
