@@ -13,22 +13,17 @@ MAX_COINS = 50 # Limit to top 50 by volume to avoid extremely slow scans
 TIMEFRAMES = ["15m", "1h"]
 
 LOOKBACK_CANDLES = 250 # Increased to ensure 200 EMA calculation has enough data
-RISK_REWARD_RATIO = 2.0
-CHECK_INTERVAL_SECONDS = 300 # Scans every 5 minutes
+RISK_REWARD_RATIO = 3.0
+CHECK_INTERVAL_SECONDS = 100 # Scans every 100 seconds
 
-# Golden Confluence Strategy Settings
+# Supertrend Momentum Strategy Settings
 EMA_PERIOD = 200
 
-# Bollinger Bands
-BB_PERIOD = 20
-BB_STD_DEV = 2.0
+# Supertrend
+SUPERTREND_LENGTH = 10
+SUPERTREND_MULTIPLIER = 3.0
 
 # RSI
 RSI_PERIOD = 14
-RSI_OVERSOLD = 40     # We look for RSI recovering from < 40
-RSI_OVERBOUGHT = 60   # We look for RSI recovering from > 60
-
-# MACD
-MACD_FAST = 12
-MACD_SLOW = 26
-MACD_SIGNAL = 9
+RSI_BULL_MOMENTUM = 50   # RSI > 50 for Longs
+RSI_BEAR_MOMENTUM = 50   # RSI < 50 for Shorts

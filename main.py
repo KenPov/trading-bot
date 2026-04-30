@@ -31,9 +31,9 @@ def run_once(send_heartbeat=False):
         print(f"Testing connection to Kraken...")
         btc_df = fetch_data("BTC/USDT", "15m", 5)
         btc_price = btc_df.iloc[-1]['close']
-        print(f"✅ Kraken Connection: SUCCESSFUL. BTC Price: ${btc_price:.2f}")
+        print(f"[SUCCESS] Kraken Connection. BTC Price: ${btc_price:.2f}")
     except Exception as e:
-        print(f"❌ Kraken Connection: FAILED! Error: {e}")
+        print(f"[FAILED] Kraken Connection Error: {e}")
         return
 
     last_signals = load_last_signals()
@@ -49,7 +49,7 @@ def run_once(send_heartbeat=False):
         assets = get_active_usdt_markets()
         print(f"Found {len(assets)} active USDT pairs to scan.")
     except Exception as e:
-        print(f"❌ Failed to fetch markets: {e}")
+        print(f"[FAILED] Failed to fetch markets: {e}")
         return
         
     # Send Heartbeat message on startup
@@ -60,23 +60,10 @@ def run_once(send_heartbeat=False):
             print(f"Failed to send heartbeat: {e}")
 
     for symbol in assets:
-        # Determine HTF Bias (highest timeframe in the list)
-        htf = config.TIMEFRAMES[-1]
-        htf_bias = "NEUTRAL"
-        try:
-            htf_df = fetch_data(symbol, htf, config.LOOKBACK_CANDLES)
-            from smc_analyzer import get_market_bias, smc
-            swing_highs_lows = smc.swing_highs_lows(htf_df)
-            bos_choch_df = smc.bos_choch(htf_df, swing_highs_lows)
-            htf_bias = get_market_bias(bos_choch_df)
-            print(f"   [{symbol}] HTF Bias ({htf}): {htf_bias}")
-        except Exception as e:
-            print(f"Error getting HTF bias for {symbol}: {e}")
-
         for timeframe in config.TIMEFRAMES:
             try:
                 df = fetch_data(symbol, timeframe, config.LOOKBACK_CANDLES)
-                signal = analyze_smc(df, symbol, timeframe, external_bias=htf_bias)
+                signal = analyze_smc(df, symbol, timeframe)
                 
                 if signal.get("setup_found"):
                     sig_id = signal["signal_id"]
