@@ -5,13 +5,21 @@ import config
 
 def get_active_usdt_markets():
     exchange = ccxt.kraken()
-    markets = exchange.load_markets()
-    # Filter for USDT pairs
-    usdt_pairs = [symbol for symbol in markets if '/USDT' in symbol]
+    tickers = exchange.fetch_tickers()
+    
+    # Filter for USDT pairs, exclude stablecoins, and sort by 24h volume
+    usdt_pairs = []
+    for symbol, data in tickers.items():
+        if '/USDT' in symbol and symbol not in getattr(config, 'STABLECOINS', []) and data.get('quoteVolume') is not None:
+            usdt_pairs.append((symbol, data['quoteVolume']))
+            
+    # Sort by volume descending
+    usdt_pairs.sort(key=lambda x: x[1], reverse=True)
+    sorted_symbols = [pair[0] for pair in usdt_pairs]
     
     if hasattr(config, 'MAX_COINS') and config.MAX_COINS:
-        return usdt_pairs[:config.MAX_COINS]
-    return usdt_pairs
+        return sorted_symbols[:config.MAX_COINS]
+    return sorted_symbols
 
 def fetch_data(symbol, timeframe, limit):
     # Using Kraken - It is US-based and will NOT block GitHub Actions.

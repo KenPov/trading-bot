@@ -9,8 +9,10 @@ TELEGRAM_CHAT_ID = "-1003708562178"
 
 # Bot configuration
 SCAN_ALL_COINS = True
-MAX_COINS = 50 # Limit to top 50 by volume to avoid extremely slow scans
+MAX_COINS = 30 # Limit to top 30 highest volume to avoid scam/low-liquidity coins
 TIMEFRAMES = ["15m", "1h"]
+
+STABLECOINS = ['USDC/USDT', 'DAI/USDT', 'USDG/USDT', 'USDE/USDT', 'PYUSD/USDT', 'FDUSD/USDT']
 
 LOOKBACK_CANDLES = 250 # Increased to ensure 200 EMA calculation has enough data
 RISK_REWARD_RATIO = 3.0
