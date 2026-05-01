@@ -13,14 +13,16 @@ async def send_signal(signal_data):
     emoji = "🟢" if direction == "LONG" else "🔴"
     
     message = (
-        f"🚨 *New SMC Setup Detected* 🚨\n\n"
-        f"**Asset:** {signal_data['symbol']}\n"
+        f"🎯 *PREDICTED LIMIT ENTRY* 🎯\n\n"
+        f"**Asset:** `{signal_data['symbol']}`\n"
+        f"**Direction:** {emoji} *{direction}*\n"
         f"**Timeframe:** {signal_data['timeframe']}\n"
-        f"**Trigger:** {signal_data['setup_type']} ({direction})\n\n"
-        f"{emoji} **Entry Price:** {signal_data['entry_price']:.5f}\n"
-        f"🎯 **Take Profit (TP):** {signal_data['tp']:.5f}\n"
-        f"🛡️ **Stop Loss (SL):** {signal_data['sl']:.5f}\n\n"
-        f"⚠️ _Trade at your own risk. Use proper risk management._"
+        f"**Method:** {signal_data['setup_type']}\n\n"
+        f"🔹 **Entry (Limit):** `{signal_data['entry_price']:.6f}`\n"
+        f"💰 **Take Profit:** `{signal_data['tp']:.6f}`\n"
+        f"🛑 **Stop Loss:** `{signal_data['sl']:.6f}`\n\n"
+        f"⚡ *RR Ratio:* `{config.RISK_REWARD_RATIO}:1`\n\n"
+        f"⚠️ _Place a LIMIT order. Wait for the price to reach the entry level._"
     )
     
     url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"

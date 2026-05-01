@@ -80,23 +80,33 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
         row = df.iloc[-2]
         prev_row = df.iloc[-3]
         
+        # Predicted Entry Level (50% retracement of the trigger candle)
+        predicted_entry = (row['high'] + row['low']) / 2
+        
         # LONG SETUP: Supertrend flips to Bullish (1) from Bearish (-1)
         st_bull_flip = row['supertrend_dir'] == 1 and prev_row['supertrend_dir'] == -1
         is_uptrend = row['close'] > row['ema_200']
         rsi_bullish = row['rsi'] > config.RSI_BULL_MOMENTUM
         
         if st_bull_flip and is_uptrend and rsi_bullish:
-            setup_found = True
-            direction = "LONG"
-            setup_type = "Supertrend Breakout"
-            entry_price = current_px
-            signal_id = f"ST_{df.index[-2]}_LONG_{symbol}_{timeframe}"
-            sl = row['supertrend_val'] # SL at Supertrend line
-            risk = entry_price - sl
-            if risk > 0:
-                tp = entry_price + (risk * config.RISK_REWARD_RATIO)
+            # PROFESSIONAL FILTER: Only signal if price is currently above the entry (waiting for pullback)
+            if current_px > predicted_entry:
+                setup_found = True
+                direction = "LONG"
+                setup_type = "Predicted Limit Entry (50% Retrace)"
+                entry_price = predicted_entry
+                signal_id = f"ST_{df.index[-2]}_LONG_LIMIT_{symbol}_{timeframe}"
+                sl = row['supertrend_val'] # SL at Supertrend line
+                
+                # Risk Management
+                risk = entry_price - sl
+                if risk > 0:
+                    tp = entry_price + (risk * config.RISK_REWARD_RATIO)
+                else:
+                    setup_found = False # Safety check
             else:
-                setup_found = False # Safety check
+                # Price already passed the entry level
+                pass
                 
         # SHORT SETUP: Supertrend flips to Bearish (-1) from Bullish (1)
         st_bear_flip = row['supertrend_dir'] == -1 and prev_row['supertrend_dir'] == 1
@@ -104,17 +114,24 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
         rsi_bearish = row['rsi'] < config.RSI_BEAR_MOMENTUM
         
         if st_bear_flip and is_downtrend and rsi_bearish:
-            setup_found = True
-            direction = "SHORT"
-            setup_type = "Supertrend Breakout"
-            entry_price = current_px
-            signal_id = f"ST_{df.index[-2]}_SHORT_{symbol}_{timeframe}"
-            sl = row['supertrend_val']
-            risk = sl - entry_price
-            if risk > 0:
-                tp = entry_price - (risk * config.RISK_REWARD_RATIO)
+            # PROFESSIONAL FILTER: Only signal if price is currently below the entry (waiting for bounce)
+            if current_px < predicted_entry:
+                setup_found = True
+                direction = "SHORT"
+                setup_type = "Predicted Limit Entry (50% Retrace)"
+                entry_price = predicted_entry
+                signal_id = f"ST_{df.index[-2]}_SHORT_LIMIT_{symbol}_{timeframe}"
+                sl = row['supertrend_val']
+                
+                # Risk Management
+                risk = sl - entry_price
+                if risk > 0:
+                    tp = entry_price - (risk * config.RISK_REWARD_RATIO)
+                else:
+                    setup_found = False
             else:
-                setup_found = False
+                # Price already passed the entry level
+                pass
                 
     except Exception as e:
         print(f"Error in strategy logic for {symbol}: {e}")
