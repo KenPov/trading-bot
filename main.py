@@ -4,7 +4,7 @@ import asyncio
 import config
 import json
 import os
-from smc_analyzer import fetch_data, analyze_smc, get_active_usdt_markets
+from smc_analyzer import fetch_data, analyze_smc, get_active_usdt_markets, get_btc_trend
 from telegram_notifier import send_signal, send_startup_message
 
 # Signal tracking file for GitHub Actions persistence
@@ -59,11 +59,19 @@ def run_once(send_heartbeat=False):
         except Exception as e:
             print(f"Failed to send heartbeat: {e}")
 
+    # Get Master BTC Trend
+    try:
+        btc_trend = get_btc_trend()
+        print(f"Master BTC Trend: {btc_trend}")
+    except Exception as e:
+        btc_trend = "UNKNOWN"
+        print(f"Error fetching BTC trend: {e}")
+
     for symbol in assets:
         for timeframe in config.TIMEFRAMES:
             try:
                 df = fetch_data(symbol, timeframe, config.LOOKBACK_CANDLES)
-                signal = analyze_smc(df, symbol, timeframe)
+                signal = analyze_smc(df, symbol, timeframe, btc_trend=btc_trend)
                 
                 if signal.get("setup_found"):
                     sig_id = signal["signal_id"]

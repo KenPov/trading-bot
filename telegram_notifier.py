@@ -13,18 +13,18 @@ async def send_signal(signal_data):
     emoji = "🟢" if direction == "LONG" else "🔴"
     
     message = (
-        f"💎 *PRO SNIPER LIMIT ENTRY* 💎\n\n"
+        f"💎 *PRO SNIPER DEEP LIMIT ENTRY* 💎\n\n"
         f"**Asset:** `{signal_data['symbol']}`\n"
         f"**Direction:** {emoji} *{direction}*\n"
         f"**Timeframe:** {signal_data['timeframe']}\n"
         f"**Strategy:** `{signal_data['setup_type']}`\n\n"
-        f"🔹 **Entry (Limit):** `{signal_data['entry_price']:.6f}`\n"
-        f"💰 **Target (400% ROE):** `{signal_data['tp']:.6f}`\n"
-        f"🛑 **Stop Loss (Liquidation):** `{signal_data['sl']:.6f}`\n\n"
+        f"🔹 **Entry (Safe Limit):** `{signal_data['entry_price']:.6f}`\n"
+        f"💰 **Target (350% ROE):** `{signal_data['tp']:.6f}`\n"
+        f"🛑 **Stop Loss (1.2% Max):** `{signal_data['sl']:.6f}`\n\n"
         f"✅ *Volume Confirmed:* `Yes` (>1.5x)\n"
-        f"✅ *HTF Alignment:* `Yes` (HTF Trend Match)\n"
+        f"✅ *BTC Trend Sync:* `Yes` (Aligned with BTC)\n"
         f"⚡ *Leverage:* `X75 (Cross)`\n\n"
-        f"⚠️ _A high-probability professional setup. Place limit order now._"
+        f"⚠️ _Deep Limit Entry at Support/Resistance to avoid SL hits._"
     )
     
     url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"

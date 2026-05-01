@@ -33,7 +33,26 @@ def fetch_data(symbol, timeframe, limit):
     df.set_index('timestamp', inplace=True)
     return df
 
-def analyze_smc(df, symbol, timeframe, external_bias=None):
+def get_btc_trend():
+    """
+    Determines the master trend of the market using BTC's 4h 200 EMA.
+    Returns 'BULLISH', 'BEARISH', or 'UNKNOWN'
+    """
+    try:
+        # Check 4h timeframe for solid BTC trend
+        df = fetch_data("BTC/USDT", "4h", 250)
+        ema_200 = ta.ema(df['close'], length=200)
+        current_close = df.iloc[-1]['close']
+        current_ema = ema_200.iloc[-1]
+        if current_close > current_ema:
+            return "BULLISH"
+        else:
+            return "BEARISH"
+    except Exception as e:
+        print(f"Failed to fetch BTC trend: {e}")
+        return "UNKNOWN"
+
+def analyze_smc(df, symbol, timeframe, external_bias=None, btc_trend="UNKNOWN"):
     """
     Supertrend Momentum Breakout Strategy
     Calculates Supertrend, 200 EMA, and RSI for high-probability signals.
@@ -100,36 +119,34 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
         # Volume Confirmation: Trigger candle volume > 1.5x average
         vol_confirmed = row['volume'] > (row['vol_ma'] * 1.5)
         
-        # SNIPER ENTRY: OTE (Optimal Trade Entry) at 70.5% Retracement
-        # This is a much deeper pullback for high leverage (X75)
-        range_size = row['high'] - row['low']
-        ote_entry_long = row['high'] - (range_size * 0.705)
-        ote_entry_short = row['low'] + (range_size * 0.705)
-        
-        # Target for X75 Leverage (400% ROE = 5.33% price move)
-        TARGET_MOVE = 0.0533 
-        MAX_SL_DIST = 0.012  # 1.2% Max SL to avoid liquidation at X75
+        # Target for X75 Leverage (350% ROE = 4.66% price move)
+        TARGET_MOVE = 0.0466 
+        MAX_SL_DIST = 0.012  # 1.2% Max SL to avoid liquidation at X75 (approx 90% ROE loss)
         
         # LONG SETUP: Supertrend flips to Bullish (1) from Bearish (-1)
         st_bull_flip = row['supertrend_dir'] == 1 and prev_row['supertrend_dir'] == -1
         is_uptrend = row['close'] > row['ema_200']
         rsi_bullish = row['rsi'] > config.RSI_BULL_MOMENTUM
         
-        if st_bull_flip and is_uptrend and rsi_bullish and vol_confirmed and htf_trend_bullish:
-            # Only signal if we can still set a limit at the OTE level
-            if current_px > ote_entry_long:
+        # BTC Trend Filter: Only LONG if BTC is BULLISH
+        btc_aligned_long = btc_trend == "BULLISH" or btc_trend == "UNKNOWN"
+        
+        if st_bull_flip and is_uptrend and rsi_bullish and vol_confirmed and htf_trend_bullish and btc_aligned_long:
+            # DEEP LIMIT ENTRY: Wait for a pullback to the Supertrend Support Line
+            deep_entry_long = row['supertrend_val']
+            
+            # Only signal if we can still set a limit at the deep entry level
+            if current_px > deep_entry_long:
                 setup_found = True
                 direction = "LONG"
-                setup_type = "PRO SNIPER (Vol + MTF + OTE)"
-                entry_price = ote_entry_long
+                setup_type = "PRO SNIPER (Deep Limit + BTC Sync)"
+                entry_price = deep_entry_long
                 signal_id = f"PRO_SNIPER_{df.index[-2]}_LONG_{symbol}_{timeframe}"
                 
-                # SL logic for X75: Use the tighter of Supertrend or 1.2%
-                st_sl = row['supertrend_val']
-                percent_sl = entry_price * (1 - MAX_SL_DIST)
-                sl = max(st_sl, percent_sl) 
+                # SL logic for X75: Fixed 1.2% below the deep entry
+                sl = entry_price * (1 - MAX_SL_DIST)
                 
-                # TP for 400% ROE
+                # TP for 350% ROE
                 tp = entry_price * (1 + TARGET_MOVE)
             else:
                 pass
@@ -139,20 +156,24 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
         is_downtrend = row['close'] < row['ema_200']
         rsi_bearish = row['rsi'] < config.RSI_BEAR_MOMENTUM
         
-        if st_bear_flip and is_downtrend and rsi_bearish and vol_confirmed and not htf_trend_bullish:
-            if current_px < ote_entry_short:
+        # BTC Trend Filter: Only SHORT if BTC is BEARISH
+        btc_aligned_short = btc_trend == "BEARISH" or btc_trend == "UNKNOWN"
+        
+        if st_bear_flip and is_downtrend and rsi_bearish and vol_confirmed and not htf_trend_bullish and btc_aligned_short:
+            # DEEP LIMIT ENTRY: Wait for a pullback to the Supertrend Resistance Line
+            deep_entry_short = row['supertrend_val']
+            
+            if current_px < deep_entry_short:
                 setup_found = True
                 direction = "SHORT"
-                setup_type = "PRO SNIPER (Vol + MTF + OTE)"
-                entry_price = ote_entry_short
+                setup_type = "PRO SNIPER (Deep Limit + BTC Sync)"
+                entry_price = deep_entry_short
                 signal_id = f"PRO_SNIPER_{df.index[-2]}_SHORT_{symbol}_{timeframe}"
                 
-                # SL logic for X75
-                st_sl = row['supertrend_val']
-                percent_sl = entry_price * (1 + MAX_SL_DIST)
-                sl = min(st_sl, percent_sl)
+                # SL logic for X75: Fixed 1.2% above the deep entry
+                sl = entry_price * (1 + MAX_SL_DIST)
                 
-                # TP for 400% ROE
+                # TP for 350% ROE
                 tp = entry_price * (1 - TARGET_MOVE)
             else:
                 pass
