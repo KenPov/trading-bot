@@ -80,8 +80,15 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
         row = df.iloc[-2]
         prev_row = df.iloc[-3]
         
-        # Predicted Entry Level (50% retracement of the trigger candle)
-        predicted_entry = (row['high'] + row['low']) / 2
+        # SNIPER ENTRY: OTE (Optimal Trade Entry) at 70.5% Retracement
+        # This is a much deeper pullback for high leverage (X75)
+        range_size = row['high'] - row['low']
+        ote_entry_long = row['high'] - (range_size * 0.705)
+        ote_entry_short = row['low'] + (range_size * 0.705)
+        
+        # Target for X75 Leverage (400% ROE = 5.33% price move)
+        TARGET_MOVE = 0.0533 
+        MAX_SL_DIST = 0.012  # 1.2% Max SL to avoid liquidation at X75
         
         # LONG SETUP: Supertrend flips to Bullish (1) from Bearish (-1)
         st_bull_flip = row['supertrend_dir'] == 1 and prev_row['supertrend_dir'] == -1
@@ -89,23 +96,22 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
         rsi_bullish = row['rsi'] > config.RSI_BULL_MOMENTUM
         
         if st_bull_flip and is_uptrend and rsi_bullish:
-            # PROFESSIONAL FILTER: Only signal if price is currently above the entry (waiting for pullback)
-            if current_px > predicted_entry:
+            # Only signal if we can still set a limit at the OTE level
+            if current_px > ote_entry_long:
                 setup_found = True
                 direction = "LONG"
-                setup_type = "Predicted Limit Entry (50% Retrace)"
-                entry_price = predicted_entry
-                signal_id = f"ST_{df.index[-2]}_LONG_LIMIT_{symbol}_{timeframe}"
-                sl = row['supertrend_val'] # SL at Supertrend line
+                setup_type = "OTE Sniper Entry (70.5% Retrace)"
+                entry_price = ote_entry_long
+                signal_id = f"SNIPER_{df.index[-2]}_LONG_{symbol}_{timeframe}"
                 
-                # Risk Management
-                risk = entry_price - sl
-                if risk > 0:
-                    tp = entry_price + (risk * config.RISK_REWARD_RATIO)
-                else:
-                    setup_found = False # Safety check
+                # SL logic for X75: Use the tighter of Supertrend or 1.2%
+                st_sl = row['supertrend_val']
+                percent_sl = entry_price * (1 - MAX_SL_DIST)
+                sl = max(st_sl, percent_sl) 
+                
+                # TP for 400% ROE
+                tp = entry_price * (1 + TARGET_MOVE)
             else:
-                # Price already passed the entry level
                 pass
                 
         # SHORT SETUP: Supertrend flips to Bearish (-1) from Bullish (1)
@@ -114,23 +120,21 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
         rsi_bearish = row['rsi'] < config.RSI_BEAR_MOMENTUM
         
         if st_bear_flip and is_downtrend and rsi_bearish:
-            # PROFESSIONAL FILTER: Only signal if price is currently below the entry (waiting for bounce)
-            if current_px < predicted_entry:
+            if current_px < ote_entry_short:
                 setup_found = True
                 direction = "SHORT"
-                setup_type = "Predicted Limit Entry (50% Retrace)"
-                entry_price = predicted_entry
-                signal_id = f"ST_{df.index[-2]}_SHORT_LIMIT_{symbol}_{timeframe}"
-                sl = row['supertrend_val']
+                setup_type = "OTE Sniper Entry (70.5% Retrace)"
+                entry_price = ote_entry_short
+                signal_id = f"SNIPER_{df.index[-2]}_SHORT_{symbol}_{timeframe}"
                 
-                # Risk Management
-                risk = sl - entry_price
-                if risk > 0:
-                    tp = entry_price - (risk * config.RISK_REWARD_RATIO)
-                else:
-                    setup_found = False
+                # SL logic for X75
+                st_sl = row['supertrend_val']
+                percent_sl = entry_price * (1 + MAX_SL_DIST)
+                sl = min(st_sl, percent_sl)
+                
+                # TP for 400% ROE
+                tp = entry_price * (1 - TARGET_MOVE)
             else:
-                # Price already passed the entry level
                 pass
                 
     except Exception as e:
