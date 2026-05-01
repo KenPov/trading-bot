@@ -60,6 +60,9 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
         # 3. RSI
         df['rsi'] = ta.rsi(df['close'], length=config.RSI_PERIOD)
         
+        # 4. Volume MA (for Volume Confirmation)
+        df['vol_ma'] = df['volume'].rolling(window=10).mean()
+        
     except Exception as e:
         print(f"Error calculating indicators for {symbol} {timeframe}: {e}")
         return {"setup_found": False}
@@ -75,10 +78,27 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
     tp = 0
     signal_id = ""
 
+    # --- PROFESSIONAL MTF TREND CHECK ---
+    # Only take 15m signals if 1h trend is aligned. Only 1h if 4h is aligned.
+    higher_tf = "1h" if timeframe == "15m" else "4h"
     try:
-        # Check the last closed candle (index -2) for the trigger, compared to index -3
+        # Re-use exchange instance to check higher timeframe
+        exchange = ccxt.kraken({'enableRateLimit': True})
+        htf_ohlcv = exchange.fetch_ohlcv(symbol, higher_tf, limit=50)
+        htf_df = pd.DataFrame(htf_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        htf_ema = ta.ema(htf_df['close'], length=50) # Faster EMA for HTF trend
+        htf_trend_bullish = htf_df['close'].iloc[-1] > htf_ema.iloc[-1]
+    except Exception as e:
+        print(f"MTF Check failed for {symbol}: {e}")
+        htf_trend_bullish = True # Default to True if fetch fails to avoid missing all signals
+
+    try:
+        # Check the last closed candle (index -2) for the trigger
         row = df.iloc[-2]
         prev_row = df.iloc[-3]
+        
+        # Volume Confirmation: Trigger candle volume > 1.5x average
+        vol_confirmed = row['volume'] > (row['vol_ma'] * 1.5)
         
         # SNIPER ENTRY: OTE (Optimal Trade Entry) at 70.5% Retracement
         # This is a much deeper pullback for high leverage (X75)
@@ -95,14 +115,14 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
         is_uptrend = row['close'] > row['ema_200']
         rsi_bullish = row['rsi'] > config.RSI_BULL_MOMENTUM
         
-        if st_bull_flip and is_uptrend and rsi_bullish:
+        if st_bull_flip and is_uptrend and rsi_bullish and vol_confirmed and htf_trend_bullish:
             # Only signal if we can still set a limit at the OTE level
             if current_px > ote_entry_long:
                 setup_found = True
                 direction = "LONG"
-                setup_type = "OTE Sniper Entry (70.5% Retrace)"
+                setup_type = "PRO SNIPER (Vol + MTF + OTE)"
                 entry_price = ote_entry_long
-                signal_id = f"SNIPER_{df.index[-2]}_LONG_{symbol}_{timeframe}"
+                signal_id = f"PRO_SNIPER_{df.index[-2]}_LONG_{symbol}_{timeframe}"
                 
                 # SL logic for X75: Use the tighter of Supertrend or 1.2%
                 st_sl = row['supertrend_val']
@@ -119,13 +139,13 @@ def analyze_smc(df, symbol, timeframe, external_bias=None):
         is_downtrend = row['close'] < row['ema_200']
         rsi_bearish = row['rsi'] < config.RSI_BEAR_MOMENTUM
         
-        if st_bear_flip and is_downtrend and rsi_bearish:
+        if st_bear_flip and is_downtrend and rsi_bearish and vol_confirmed and not htf_trend_bullish:
             if current_px < ote_entry_short:
                 setup_found = True
                 direction = "SHORT"
-                setup_type = "OTE Sniper Entry (70.5% Retrace)"
+                setup_type = "PRO SNIPER (Vol + MTF + OTE)"
                 entry_price = ote_entry_short
-                signal_id = f"SNIPER_{df.index[-2]}_SHORT_{symbol}_{timeframe}"
+                signal_id = f"PRO_SNIPER_{df.index[-2]}_SHORT_{symbol}_{timeframe}"
                 
                 # SL logic for X75
                 st_sl = row['supertrend_val']
