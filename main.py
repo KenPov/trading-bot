@@ -47,10 +47,19 @@ def run_once(send_heartbeat=False):
             signal = analyze_trend_pullback(symbol)
             if signal.get("setup_found"):
                 sig_id = signal["signal_id"]
-                if last_signals.get(symbol) != sig_id:
+                current_time = time.time()
+                last_time = last_signals.get(symbol, 0)
+                
+                # Handle old format where last_signals stored strings
+                if isinstance(last_time, str):
+                    last_time = 0
+                
+                cooldown_seconds = getattr(config, 'SIGNAL_COOLDOWN_MINUTES', 60) * 60
+                
+                if current_time - last_time > cooldown_seconds:
                     print(f"!!! PERFECT SETUP: {symbol} - LONG @ {signal['entry_price']:.2f}")
                     send_signal(signal)
-                    last_signals[symbol] = sig_id
+                    last_signals[symbol] = current_time
                     new_signals_found = True
         except Exception as e:
             print(f"Error processing {symbol}: {e}")
