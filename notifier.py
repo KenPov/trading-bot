@@ -26,30 +26,31 @@ def send_telegram_message(message):
 
 def send_startup_message(assets_count, btc_price):
     message = (
-        f"✅ *SMC Scanner Heartbeat*\n\n"
-        f"🌐 **Exchange:** Kraken\n"
-        f"📊 **Tracking Assets:** {assets_count} coins\n"
-        f"💰 **Current BTC Price:** ${btc_price:,.2f}\n"
-        f"📡 **Status:** Scanning for Perfect Entries...\n"
+        f"🚀 *HIGH-LEVERAGE SNIPER ACTIVE* 🚀\n\n"
+        f"🌐 **Data Source:** MEXC (Binance Compatible)\n"
+        f"📊 **Scanning:** {assets_count} Top Coins\n"
+        f"💰 **BTC Price:** ${btc_price:,.2f}\n"
+        f"📡 **Status:** Searching for Sniper Entries...\n"
+        f"🎯 **Target:** $2 -> $6 (X75 Leverage)"
     )
     send_telegram_message(message)
 
 def send_signal(signal_data):
     direction = signal_data['direction']
     emoji = "🟢" if direction == "LONG" else "🔴"
+    action = "BUY / LONG" if direction == "LONG" else "SELL / SHORT"
     
     message = (
-        f"🎯 *PRO SNIPER TREND PULLBACK* 🎯\n\n"
+        f"🎯 *SNIPER {direction} SIGNAL* 🎯\n\n"
         f"**Asset:** `{signal_data['symbol']}`\n"
-        f"**Direction:** {emoji} *{direction}*\n"
-        f"**Timeframe:** {config.TIMEFRAME_ENTRY}\n\n"
-        f"🔹 **Entry (Safe Limit):** `{signal_data['entry_price']:.6f}`\n"
-        f"💰 **Take Profit (300% ROE):** `{signal_data['tp']:.6f}`\n"
-        f"🛑 **Stop Loss (Max 1.2%):** `{signal_data['sl']:.6f}`\n\n"
-        f"✅ *Macro Trend:* `Bullish`\n"
-        f"✅ *RSI Pierced:* `Yes (Oversold Dip)`\n"
-        f"⚡ *Leverage:* `X75`\n\n"
-        f"⚠️ _Place a limit order at the exact Entry price to catch the bounce._"
+        f"**Direction:** {emoji} *{action}*\n"
+        f"**Leverage:** `X75` (High Risk)\n\n"
+        f"🔹 **Safe Limit Entry:** `{signal_data['entry_price']:.6f}`\n"
+        f"💰 **Take Profit:** `{signal_data['tp']:.6f}` (+$4.00)\n"
+        f"🛑 **Stop Loss:** `{signal_data['sl']:.6f}` (Max 1.2%)\n\n"
+        f"✅ *Macro Trend:* `Confirmed`\n"
+        f"✅ *Entry Logic:* `EMA 200 Magnet Bounce`\n\n"
+        f"⚠️ _Place a LIMIT order at the Entry price on Binance._"
     )
     
     send_telegram_message(message)

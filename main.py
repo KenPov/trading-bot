@@ -2,6 +2,7 @@ import time
 import json
 import os
 import config
+from concurrent.futures import ThreadPoolExecutor
 from strategy import get_active_usdt_markets, analyze_trend_pullback, fetch_data
 from notifier import send_startup_message, send_signal
 
@@ -21,7 +22,7 @@ def save_last_signals(signals):
         json.dump(signals, f)
 
 def run_once(send_heartbeat=False):
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Starting Scan...")
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Starting Fast Parallel Scan...")
     
     try:
         btc_df = fetch_data("BTC/USDT", "15m", 5)
@@ -32,6 +33,7 @@ def run_once(send_heartbeat=False):
 
     try:
         assets = get_active_usdt_markets()
+        print(f"Scanning {len(assets)} assets in parallel...")
     except Exception as e:
         print(f"Failed to fetch markets: {e}")
         return
@@ -42,36 +44,30 @@ def run_once(send_heartbeat=False):
     last_signals = load_last_signals()
     new_signals_found = False
 
-    for symbol in assets:
-        try:
-            signal = analyze_trend_pullback(symbol)
-            if signal.get("setup_found"):
-                sig_id = signal["signal_id"]
-                current_time = time.time()
-                last_time = last_signals.get(symbol, 0)
-                
-                # Handle old format where last_signals stored strings
-                if isinstance(last_time, str):
-                    last_time = 0
-                
-                cooldown_seconds = getattr(config, 'SIGNAL_COOLDOWN_MINUTES', 60) * 60
-                
-                if current_time - last_time > cooldown_seconds:
-                    print(f"!!! PERFECT SETUP: {symbol} - LONG @ {signal['entry_price']:.2f}")
-                    send_signal(signal)
-                    last_signals[symbol] = current_time
-                    new_signals_found = True
-        except Exception as e:
-            print(f"Error processing {symbol}: {e}")
+    # Parallel Execution using ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        results = list(executor.map(analyze_trend_pullback, assets))
+
+    for signal in results:
+        if signal and signal.get("setup_found"):
+            symbol = signal["symbol"]
+            current_time = time.time()
+            last_time = last_signals.get(symbol, 0)
+            
+            if current_time - last_time > (config.SIGNAL_COOLDOWN_MINUTES * 60):
+                direction = signal['direction']
+                print(f"🔥 SNIPER {direction} FOUND: {symbol} @ {signal['entry_price']:.6f}")
+                send_signal(signal)
+                last_signals[symbol] = current_time
+                new_signals_found = True
 
     if new_signals_found:
         save_last_signals(last_signals)
         
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Scan Completed.")
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Parallel Scan Completed.")
 
 if __name__ == "__main__":
     start_time = time.time()
-    # Run for just under 6 hours (standard for GitHub actions)
     max_duration = 5 * 3600 + 55 * 60 
     
     first_run = True
@@ -79,7 +75,7 @@ if __name__ == "__main__":
         try:
             run_once(send_heartbeat=first_run)
         except Exception as e:
-            print(f"Critical error during scan: {e}")
+            print(f"Critical error: {e}")
             
         first_run = False
         time.sleep(config.CHECK_INTERVAL_SECONDS)
