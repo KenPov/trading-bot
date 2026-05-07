@@ -1,7 +1,7 @@
 import os
 
 # Telegram Credentials
-TELEGRAM_BOT_TOKEN = "8736079728:AAEF3i89antnk-dpo_1Bz86JHxyP8OnTBCA"
+TELEGRAM_BOT_TOKEN = "8317215211:AAFR_pTgQptiT5N79Y9VzcftotceBbXLAhE"
 TELEGRAM_CHAT_ID = "-1003708562178"
 
 # Scanning configuration
