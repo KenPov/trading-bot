@@ -16,15 +16,21 @@ STABLECOINS = ['USDC/USDT', 'DAI/USDT', 'USDG/USDT', 'USDE/USDT', 'PYUSD/USDT', 
 # Strategy Parameters
 EMA_PERIOD = 200
 RSI_PERIOD = 14
-RSI_OVERSOLD = 32 
-RSI_OVERBOUGHT = 68 
+RSI_OVERSOLD = 35 # Adjusted to detect exhaustion before the hook
+RSI_OVERBOUGHT = 65 
 BB_LENGTH = 20
 BB_STD = 2.2 # Sniper precision
 
+# Golden Confluence Additions
+MACD_FAST = 12
+MACD_SLOW = 26
+MACD_SIGNAL = 9
+VOL_SMA_PERIOD = 20
+ATR_PERIOD = 14
+
 # Risk Reward for X75 Leverage
-# Goal: $2 margin -> $4 profit ($6 total)
-TP_PRICE_MOVE = 0.0267 
-SL_PRICE_MOVE = 0.012 # Tight SL to avoid liquidation at 75x
+MAX_SL_PERCENT = 0.012 # Strict SL cap at 1.2% to avoid liquidation at 75x
+MIN_RR_RATIO = 2.5 # Target a 1:2.5 Risk-to-Reward Ratio
 
 CHECK_INTERVAL_SECONDS = 60 
 SIGNAL_COOLDOWN_MINUTES = 120 

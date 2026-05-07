@@ -45,8 +45,8 @@ def fetch_data(symbol, timeframe, limit):
 
 def analyze_trend_pullback(symbol):
     """
-    The Ultimate High-Leverage (X75) Sniper Strategy.
-    Scans for both Long and Short setups at key bounce levels.
+    Golden Confluence High-Leverage (X75) Sniper Strategy.
+    Scans for Long/Short setups at key levels with momentum confirmation.
     """
     try:
         # 1. Macro Trend Check (1 Hour)
@@ -64,48 +64,86 @@ def analyze_trend_pullback(symbol):
         df = fetch_data(symbol, config.TIMEFRAME_ENTRY, 250)
         if len(df) < 250: return {"setup_found": False}
         
+        # Calculate Indicators
         df['ema_200'] = ta.ema(df['close'], length=config.EMA_PERIOD)
         df['rsi'] = ta.rsi(df['close'], length=config.RSI_PERIOD)
+        df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=config.ATR_PERIOD)
+        df['vol_sma'] = ta.sma(df['volume'], length=config.VOL_SMA_PERIOD)
         
+        # MACD Calculation
+        macd_df = ta.macd(df['close'], fast=config.MACD_FAST, slow=config.MACD_SLOW, signal=config.MACD_SIGNAL)
+        macd_hist_col = [c for c in macd_df.columns if 'MACDh' in c][0]
+        df['macd_hist'] = macd_df[macd_hist_col]
+        
+        # Bollinger Bands
         bbands = ta.bbands(df['close'], length=config.BB_LENGTH, std=config.BB_STD)
         df['bb_lower'] = bbands[f'BBL_{config.BB_LENGTH}_{config.BB_STD}']
         df['bb_upper'] = bbands[f'BBU_{config.BB_LENGTH}_{config.BB_STD}']
         
-        current_px = df.iloc[-1]['close']
-        current_ema = df.iloc[-1]['ema_200']
+        # Current and Previous Data points
+        curr = df.iloc[-1]
+        prev = df.iloc[-2]
         
-        recent_low = df['low'].iloc[-3:].min()
-        recent_high = df['high'].iloc[-3:].max()
-        recent_rsi_min = df['rsi'].iloc[-3:].min()
-        recent_rsi_max = df['rsi'].iloc[-3:].max()
+        # Structural Variables (last 3 completed candles)
+        recent_low = df['low'].iloc[-4:-1].min()
+        recent_high = df['high'].iloc[-4:-1].max()
+        recent_rsi_min = df['rsi'].iloc[-4:-1].min()
+        recent_rsi_max = df['rsi'].iloc[-4:-1].max()
+        
+        current_px = curr['close']
+        current_ema = curr['ema_200']
+        
+        # ATR-based Risk Calculation (Capped at MAX_SL_PERCENT)
+        raw_sl_pct = (curr['atr'] * 1.5) / current_px
+        sl_pct = min(raw_sl_pct, config.MAX_SL_PERCENT)
+        tp_pct = sl_pct * config.MIN_RR_RATIO
         
         # --- LONG SETUP ---
         if macro_bullish and current_px > current_ema:
-            dip_detected = recent_rsi_min < config.RSI_OVERSOLD and recent_low < df.iloc[-1]['bb_lower']
-            if dip_detected:
-                limit_entry = current_ema
-                if current_px > limit_entry:
-                    return {
-                        "setup_found": True, "direction": "LONG", "symbol": symbol,
-                        "entry_price": limit_entry, "tp": limit_entry * (1 + config.TP_PRICE_MOVE),
-                        "sl": limit_entry * (1 - config.SL_PRICE_MOVE),
-                        "signal_id": f"LONG_{int(time.time())}_{symbol}"
-                    }
+            # 1. Pullback Zone: Price dipped near lower BB or EMA recently
+            dip_detected = recent_low < prev['bb_lower'] or recent_low < prev['ema_200'] * 1.002
+            
+            # 2. RSI Hook: Was oversold, now turning up
+            rsi_hook = recent_rsi_min < config.RSI_OVERSOLD and curr['rsi'] > prev['rsi']
+            
+            # 3. MACD Momentum Shift: Histogram rising (bearish momentum fading)
+            macd_bullish = curr['macd_hist'] > prev['macd_hist']
+            
+            # 4. Volume Confirmation: High volume on the bounce
+            vol_confirm = curr['volume'] > curr['vol_sma'] or prev['volume'] > prev['vol_sma']
+            
+            if dip_detected and rsi_hook and macd_bullish and vol_confirm:
+                return {
+                    "setup_found": True, "direction": "LONG", "symbol": symbol,
+                    "entry_price": current_px, "tp": current_px * (1 + tp_pct),
+                    "sl": current_px * (1 - sl_pct),
+                    "signal_id": f"LONG_{int(time.time())}_{symbol}"
+                }
 
         # --- SHORT SETUP ---
         if macro_bearish and current_px < current_ema:
-            peak_detected = recent_rsi_max > config.RSI_OVERBOUGHT and recent_high > df.iloc[-1]['bb_upper']
-            if peak_detected:
-                limit_entry = current_ema
-                if current_px < limit_entry:
-                    return {
-                        "setup_found": True, "direction": "SHORT", "symbol": symbol,
-                        "entry_price": limit_entry, "tp": limit_entry * (1 - config.TP_PRICE_MOVE),
-                        "sl": limit_entry * (1 + config.SL_PRICE_MOVE),
-                        "signal_id": f"SHORT_{int(time.time())}_{symbol}"
-                    }
+            # 1. Pullback Zone: Price spiked near upper BB or EMA recently
+            peak_detected = recent_high > prev['bb_upper'] or recent_high > prev['ema_200'] * 0.998
+            
+            # 2. RSI Hook: Was overbought, now turning down
+            rsi_hook = recent_rsi_max > config.RSI_OVERBOUGHT and curr['rsi'] < prev['rsi']
+            
+            # 3. MACD Momentum Shift: Histogram falling (bullish momentum fading)
+            macd_bearish = curr['macd_hist'] < prev['macd_hist']
+            
+            # 4. Volume Confirmation: High volume on the rejection
+            vol_confirm = curr['volume'] > curr['vol_sma'] or prev['volume'] > prev['vol_sma']
+            
+            if peak_detected and rsi_hook and macd_bearish and vol_confirm:
+                return {
+                    "setup_found": True, "direction": "SHORT", "symbol": symbol,
+                    "entry_price": current_px, "tp": current_px * (1 - tp_pct),
+                    "sl": current_px * (1 + sl_pct),
+                    "signal_id": f"SHORT_{int(time.time())}_{symbol}"
+                }
                 
     except Exception as e:
+        print(f"Error analyzing {symbol}: {e}")
         pass
         
     return {"setup_found": False}
