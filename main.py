@@ -45,7 +45,8 @@ def run_once(send_heartbeat=False):
     new_signals_found = False
 
     # Parallel Execution using ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=15) as executor:
+    # Reduced max_workers to 3 to prevent MEXC 429 Too Many Requests errors
+    with ThreadPoolExecutor(max_workers=3) as executor:
         results = list(executor.map(analyze_trend_pullback, assets))
 
     for signal in results:
