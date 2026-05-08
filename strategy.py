@@ -7,57 +7,51 @@ import time
 # Create global exchange instances
 exchange = ccxt.mexc({'enableRateLimit': True})
 
-# Static Whitelist of Binance USDT-M Futures Symbols
-# This ensures validation without needing an API connection to Binance
-BINANCE_FUTURES_WHITELIST = [
-    'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT', 'ADA/USDT', 'DOGE/USDT', 'DOT/USDT', 
-    'MATIC/USDT', 'LINK/USDT', 'LTC/USDT', 'TRX/USDT', 'BCH/USDT', 'SHIB/USDT', 'AVAX/USDT', 'ATOM/USDT', 
-    'UNI/USDT', 'ETC/USDT', 'FIL/USDT', 'ALGO/USDT', 'NEAR/USDT', 'ICP/USDT', 'VET/USDT', 'FTM/USDT', 
-    'SAND/USDT', 'MANA/USDT', 'AXS/USDT', 'EGLD/USDT', 'THETA/USDT', 'HBAR/USDT', 'GRT/USDT', 'AAVE/USDT', 
-    'EOS/USDT', 'FLOW/USDT', 'KSM/USDT', 'ZEC/USDT', 'NEO/USDT', 'MKR/USDT', 'DASH/USDT', 'WAVES/USDT', 
-    'SNX/USDT', 'CHZ/USDT', 'ENJ/USDT', 'CRV/USDT', 'LRC/USDT', 'ONE/USDT', 'GALA/USDT', 'ANKR/USDT', 
-    'REEF/USDT', 'KAVA/USDT', 'BAND/USDT', 'IOST/USDT', 'OMG/USDT', 'ZIL/USDT', 'REN/USDT', 'LINA/USDT', 
-    'SFP/USDT', 'RAY/USDT', 'SRM/USDT', 'DYDX/USDT', 'GTC/USDT', 'ENS/USDT', 'PEOPLE/USDT', 'APE/USDT', 
-    'GMT/USDT', 'OP/USDT', 'LDO/USDT', 'APT/USDT', 'ARB/USDT', 'SUI/USDT', 'PEPE/USDT', 'ORDI/USDT', 
-    'TIA/USDT', 'PYTH/USDT', 'JUP/USDT', 'STRK/USDT', 'ENA/USDT', 'W/USDT', 'TNSR/USDT', 'SAGA/USDT', 
-    'OMNI/USDT', 'REZ/USDT', 'NOT/USDT', 'IO/USDT', 'ZK/USDT', 'LISTA/USDT', 'ZRO/USDT', 'RENDER/USDT',
-    'WIF/USDT', 'BONK/USDT', 'FLOKI/USDT', 'TURBO/USDT', '1000SATS/USDT', '1000RATS/USDT', 'PIXEL/USDT',
-    'PORTAL/USDT', 'AEVO/USDT', 'ETHFI/USDT', 'BOME/USDT', 'TAO/USDT', 'BANANA/USDT', 'DOGS/USDT',
-    'HMSTR/USDT', 'CATI/USDT', 'EIGEN/USDT', 'SCR/USDT', 'GRASS/USDT', 'DRIFT/USDT', 'PENGU/USDT',
-    'MOVE/USDT', 'ME/USDT', 'VIRTUE/USDT', 'UXLINK/USDT', 'POPOCAT/USDT', 'POPCAT/USDT', 'BRETT/USDT',
-    'ZRO/USDT', 'BLAST/USDT', 'ZK/USDT', 'LISTA/USDT', 'ZRO/USDT', 'RENDER/USDT', 'TAO/USDT'
-]
-
 def get_active_usdt_markets():
-    """Finds high-volume MEXC markets that are also in the static Binance Futures whitelist."""
+    """
+    Dynamically finds the 'Best Coins' for professional trading.
+    Prioritizes high-volume, liquid markets that follow structural patterns.
+    """
     try:
-        # Fetch MEXC tickers for volume data
+        # Fetch MEXC tickers for volume and price data
         tickers = exchange.fetch_tickers()
         
-        usdt_pairs = []
+        candidates = []
         for symbol, data in tickers.items():
-            # Filter: Must be USDT, not a stablecoin, AND must be in our Static Whitelist
+            # Filter: Must be USDT, not a stablecoin, and must have a price
             if '/USDT' in symbol and symbol not in config.STABLECOINS:
-                if symbol in BINANCE_FUTURES_WHITELIST:
-                    quote_volume = data.get('quoteVolume', 0)
-                    if quote_volume and quote_volume > 100000: 
-                        usdt_pairs.append((symbol, quote_volume))
+                quote_volume = data.get('quoteVolume', 0)
+                last_price = data.get('last', 0)
+                
+                # Professional Filter:
+                # 1. Minimum Volume ($1,000,000+ per 24h for basic liquidity)
+                # 2. Exclude extremely cheap 'shitcoins' with too many zeros (manipulation risk)
+                if quote_volume and quote_volume > 1000000 and last_price > 0.00001:
+                    candidates.append({
+                        "symbol": symbol,
+                        "volume": quote_volume,
+                        "change": abs(data.get('percentage', 0)) # Volatility/Trendiness
+                    })
         
-        # Sort by volume (highest first)
-        usdt_pairs.sort(key=lambda x: x[1], reverse=True)
+        # Sort by Volume first (Top 100), then by movement (Trendiness)
+        candidates.sort(key=lambda x: x['volume'], reverse=True)
+        top_by_volume = candidates[:100]
         
-        # Take the top MAX_COINS
-        final_list = [pair[0] for pair in usdt_pairs[:config.MAX_COINS]]
+        # Of the top volume coins, prioritize those with the most 'clean' movement
+        top_by_volume.sort(key=lambda x: x['change'], reverse=True)
+        
+        # Take the top MAX_COINS (e.g., top 50)
+        final_list = [c['symbol'] for c in top_by_volume[:config.MAX_COINS]]
         
         if not final_list:
-            print("⚠️ No matching coins found. Check whitelist or volume.")
-            return BINANCE_FUTURES_WHITELIST[:10] # Fallback to top of whitelist
+            print("⚠️ No suitable coins found based on volume filters.")
+            return ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'] # Core fallback
             
         return final_list
         
     except Exception as e:
         print(f"Error fetching MEXC markets: {e}")
-        return BINANCE_FUTURES_WHITELIST[:10] # Fallback to top of whitelist if MEXC fails
+        return ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
 
 def fetch_data(symbol, timeframe, limit):
     """Fetches OHLCV data from MEXC using the shared instance."""
@@ -67,10 +61,71 @@ def fetch_data(symbol, timeframe, limit):
     df.set_index('timestamp', inplace=True)
     return df
 
+def detect_fvg(df):
+    """Detects the most recent Fair Value Gap (Imbalance)."""
+    # Bullish FVG: Low of candle[i] > High of candle[i-2]
+    # Bearish FVG: High of candle[i] < Low of candle[i-2]
+    
+    last_3 = df.iloc[-3:]
+    curr_low = last_3.iloc[-1]['low']
+    curr_high = last_3.iloc[-1]['high']
+    prev2_high = last_3.iloc[-3]['high']
+    prev2_low = last_3.iloc[-3]['low']
+    
+    # Bullish FVG
+    if curr_low > prev2_high:
+        gap = curr_low - prev2_high
+        if gap / prev2_high > config.FVG_MIN_PCT:
+            return {"type": "BULLISH", "top": curr_low, "bottom": prev2_high}
+            
+    # Bearish FVG
+    if curr_high < prev2_low:
+        gap = prev2_low - curr_high
+        if gap / curr_high > config.FVG_MIN_PCT:
+            return {"type": "BEARISH", "top": prev2_low, "bottom": curr_high}
+            
+    return None
+
+def detect_msb(df, direction):
+    """Detects Market Structure Break (MSB)."""
+    lookback = config.STRUCT_LOOKBACK
+    recent_data = df.iloc[-(lookback+1):-1]
+    
+    if direction == "LONG":
+        # Break of recent Swing High
+        recent_high = recent_data['high'].max()
+        if df.iloc[-1]['close'] > recent_high:
+            return True
+    else:
+        # Break of recent Swing Low
+        recent_low = recent_data['low'].min()
+        if df.iloc[-1]['close'] < recent_low:
+            return True
+    return False
+
+def calculate_ote(df, direction):
+    """Calculates Optimal Trade Entry levels based on the recent swing leg."""
+    lookback = config.STRUCT_LOOKBACK
+    recent_data = df.iloc[-lookback:]
+    
+    if direction == "LONG":
+        low = recent_data['low'].min()
+        high = recent_data['high'].max()
+        diff = high - low
+        ote_top = high - (diff * config.OTE_LOW)
+        ote_bottom = high - (diff * config.OTE_HIGH)
+        return {"top": ote_top, "bottom": ote_bottom}
+    else:
+        high = recent_data['high'].max()
+        low = recent_data['low'].min()
+        diff = high - low
+        ote_top = low + (diff * config.OTE_HIGH)
+        ote_bottom = low + (diff * config.OTE_LOW)
+        return {"top": ote_top, "bottom": ote_bottom}
+
 def analyze_trend_pullback(symbol):
     """
-    Golden Confluence High-Leverage (X75) Sniper Strategy.
-    Scans for Long/Short setups at key levels with momentum confirmation.
+    Professional Sniper Strategy with SMC, OTE, and Market Structure.
     """
     try:
         # 1. Macro Trend Check (1 Hour)
@@ -98,15 +153,14 @@ def analyze_trend_pullback(symbol):
         supertrend = ta.supertrend(df['high'], df['low'], df['close'], length=config.SUPERTREND_LENGTH, multiplier=config.SUPERTREND_MULTIPLIER)
         df['supertrend_dir'] = supertrend[f'SUPERTd_{config.SUPERTREND_LENGTH}_{config.SUPERTREND_MULTIPLIER.is_integer() and int(config.SUPERTREND_MULTIPLIER) or config.SUPERTREND_MULTIPLIER}.0'] if f'SUPERTd_{config.SUPERTREND_LENGTH}_{config.SUPERTREND_MULTIPLIER.is_integer() and int(config.SUPERTREND_MULTIPLIER) or config.SUPERTREND_MULTIPLIER}.0' in supertrend.columns else supertrend.iloc[:, 1]
         
-        # ADX
+        # ADX, RSI, ATR, MACD, etc.
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=config.ADX_PERIOD)
         df['adx'] = adx_df[f'ADX_{config.ADX_PERIOD}']
-        
         df['rsi'] = ta.rsi(df['close'], length=config.RSI_PERIOD)
         df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=config.ATR_PERIOD)
         df['vol_sma'] = ta.sma(df['volume'], length=config.VOL_SMA_PERIOD)
         
-        # MACD Calculation
+        # MACD
         macd_df = ta.macd(df['close'], fast=config.MACD_FAST, slow=config.MACD_SLOW, signal=config.MACD_SIGNAL)
         macd_hist_col = [c for c in macd_df.columns if 'MACDh' in c][0]
         df['macd_hist'] = macd_df[macd_hist_col]
@@ -116,75 +170,71 @@ def analyze_trend_pullback(symbol):
         df['bb_lower'] = bbands[f'BBL_{config.BB_LENGTH}_{config.BB_STD}']
         df['bb_upper'] = bbands[f'BBU_{config.BB_LENGTH}_{config.BB_STD}']
         
-        # Current and Previous Data points
+        # Professional Filters
+        fvg = detect_fvg(df)
+        
         curr = df.iloc[-1]
         prev = df.iloc[-2]
         
-        # Structural Variables (last 3 completed candles)
-        recent_low = df['low'].iloc[-4:-1].min()
-        recent_high = df['high'].iloc[-4:-1].max()
-        recent_rsi_min = df['rsi'].iloc[-4:-1].min()
-        recent_rsi_max = df['rsi'].iloc[-4:-1].max()
-        
         current_px = curr['close']
-        current_ema_200 = curr['ema_200']
-        current_ema_50 = curr['ema_50']
-        current_ema_100 = curr['ema_100']
-        
-        entry_bullish = (current_ema_50 > current_ema_100) and (current_ema_100 > current_ema_200)
-        entry_bearish = (current_ema_50 < current_ema_100) and (current_ema_100 < current_ema_200)
-        
         adx_strong = curr['adx'] > config.ADX_THRESHOLD
         st_bullish = curr['supertrend_dir'] == 1
         st_bearish = curr['supertrend_dir'] == -1
         
-        # ATR-based Risk Calculation (Capped at MAX_SL_PERCENT)
+        # Institutional Volume Confirm
+        vol_confirm = curr['volume'] > curr['vol_sma'] * config.VOLUME_INSTITUTIONAL_MULT
+        
+        # ATR-based Risk
         raw_sl_pct = (curr['atr'] * 1.5) / current_px
         sl_pct = min(raw_sl_pct, config.MAX_SL_PERCENT)
         tp_pct = sl_pct * config.MIN_RR_RATIO
         
         # --- LONG SETUP ---
-        if macro_bullish and entry_bullish and adx_strong and st_bullish and current_px > current_ema_50:
-            # 1. Pullback Zone: Price dipped near lower BB or EMA 50 recently
-            dip_detected = recent_low < prev['bb_lower'] or recent_low < prev['ema_50'] * 1.002
+        if macro_bullish and adx_strong and st_bullish:
+            # 1. Market Structure Break (Wait for pullback then break high)
+            msb = detect_msb(df, "LONG")
             
-            # 2. RSI Hook: Was oversold, now turning up
-            rsi_hook = recent_rsi_min < config.RSI_OVERSOLD and curr['rsi'] > prev['rsi']
+            # 2. OTE Zone Check
+            ote = calculate_ote(df, "LONG")
+            in_ote_zone = current_px <= ote['top'] and current_px >= ote['bottom']
             
-            # 3. MACD Momentum Shift: Histogram rising (bearish momentum fading)
-            macd_bullish = curr['macd_hist'] > prev['macd_hist']
+            # 3. RSI Hook
+            rsi_hook = df['rsi'].iloc[-4:-1].min() < config.RSI_OVERSOLD and curr['rsi'] > prev['rsi']
             
-            # 4. Volume Confirmation: High volume on the bounce
-            vol_confirm = curr['volume'] > curr['vol_sma'] or prev['volume'] > prev['vol_sma']
+            # Confluence: FVG detected recently OR In OTE Zone OR MSB occurred
+            professional_confirm = msb or in_ote_zone or (fvg and fvg['type'] == "BULLISH")
             
-            if dip_detected and rsi_hook and macd_bullish and vol_confirm:
+            if professional_confirm and vol_confirm and rsi_hook:
                 return {
                     "setup_found": True, "direction": "LONG", "symbol": symbol,
                     "entry_price": current_px, "tp": current_px * (1 + tp_pct),
                     "sl": current_px * (1 - sl_pct),
-                    "signal_id": f"LONG_{int(time.time())}_{symbol}"
+                    "signal_id": f"LONG_{int(time.time())}_{symbol}",
+                    "strategy": "PRO_SNIPER_SMC"
                 }
 
         # --- SHORT SETUP ---
-        if macro_bearish and entry_bearish and adx_strong and st_bearish and current_px < current_ema_50:
-            # 1. Pullback Zone: Price spiked near upper BB or EMA 50 recently
-            peak_detected = recent_high > prev['bb_upper'] or recent_high > prev['ema_50'] * 0.998
+        if macro_bearish and adx_strong and st_bearish:
+            # 1. Market Structure Break
+            msb = detect_msb(df, "SHORT")
             
-            # 2. RSI Hook: Was overbought, now turning down
-            rsi_hook = recent_rsi_max > config.RSI_OVERBOUGHT and curr['rsi'] < prev['rsi']
+            # 2. OTE Zone Check
+            ote = calculate_ote(df, "SHORT")
+            in_ote_zone = current_px >= ote['top'] and current_px <= ote['bottom']
             
-            # 3. MACD Momentum Shift: Histogram falling (bullish momentum fading)
-            macd_bearish = curr['macd_hist'] < prev['macd_hist']
+            # 3. RSI Hook
+            rsi_hook = df['rsi'].iloc[-4:-1].max() > config.RSI_OVERBOUGHT and curr['rsi'] < prev['rsi']
             
-            # 4. Volume Confirmation: High volume on the rejection
-            vol_confirm = curr['volume'] > curr['vol_sma'] or prev['volume'] > prev['vol_sma']
+            # Confluence
+            professional_confirm = msb or in_ote_zone or (fvg and fvg['type'] == "BEARISH")
             
-            if peak_detected and rsi_hook and macd_bearish and vol_confirm:
+            if professional_confirm and vol_confirm and rsi_hook:
                 return {
                     "setup_found": True, "direction": "SHORT", "symbol": symbol,
                     "entry_price": current_px, "tp": current_px * (1 - tp_pct),
                     "sl": current_px * (1 + sl_pct),
-                    "signal_id": f"SHORT_{int(time.time())}_{symbol}"
+                    "signal_id": f"SHORT_{int(time.time())}_{symbol}",
+                    "strategy": "PRO_SNIPER_SMC"
                 }
                 
     except Exception as e:

@@ -23,6 +23,13 @@ RSI_OVERBOUGHT = 70 # Stricter overbought condition
 BB_LENGTH = 20
 BB_STD = 2.2 # Sniper precision
 
+# Professional Trader Strategy Parameters (SMC/ICT)
+FVG_MIN_PCT = 0.001  # 0.1% minimum gap size
+OTE_LOW = 0.618      # Fibonacci 61.8%
+OTE_HIGH = 0.786     # Fibonacci 78.6%
+STRUCT_LOOKBACK = 20 # Lookback for Market Structure
+VOLUME_INSTITUTIONAL_MULT = 1.5 # 1.5x average volume for institutional confirm
+
 # Golden Confluence Additions
 MACD_FAST = 12
 MACD_SLOW = 26
