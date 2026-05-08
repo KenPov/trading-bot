@@ -14,10 +14,12 @@ TIMEFRAME_MACRO = "1h"
 STABLECOINS = ['USDC/USDT', 'DAI/USDT', 'USDG/USDT', 'USDE/USDT', 'PYUSD/USDT', 'FDUSD/USDT', 'TUSD/USDT', 'BUSD/USDT']
 
 # Strategy Parameters
-EMA_PERIOD = 200
+EMA_50 = 50
+EMA_100 = 100
+EMA_200 = 200
 RSI_PERIOD = 14
-RSI_OVERSOLD = 35 # Adjusted to detect exhaustion before the hook
-RSI_OVERBOUGHT = 65 
+RSI_OVERSOLD = 30 # Stricter oversold condition
+RSI_OVERBOUGHT = 70 # Stricter overbought condition
 BB_LENGTH = 20
 BB_STD = 2.2 # Sniper precision
 
@@ -27,6 +29,10 @@ MACD_SLOW = 26
 MACD_SIGNAL = 9
 VOL_SMA_PERIOD = 20
 ATR_PERIOD = 14
+ADX_PERIOD = 14
+ADX_THRESHOLD = 25 # Minimum trend strength required
+SUPERTREND_LENGTH = 10
+SUPERTREND_MULTIPLIER = 3.0
 
 # Risk Reward for X75 Leverage
 MAX_SL_PERCENT = 0.012 # Strict SL cap at 1.2% to avoid liquidation at 75x
