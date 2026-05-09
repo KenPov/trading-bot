@@ -181,8 +181,9 @@ def analyze_trend_pullback(symbol):
         st_bullish = curr['supertrend_dir'] == 1
         st_bearish = curr['supertrend_dir'] == -1
         
-        # Institutional Volume Confirm
-        vol_confirm = curr['volume'] > curr['vol_sma'] * config.VOLUME_INSTITUTIONAL_MULT
+        # Institutional Volume Confirm (check previous closed candle OR current spike)
+        vol_confirm = (prev['volume'] > prev['vol_sma'] * config.VOLUME_INSTITUTIONAL_MULT) or \
+                      (curr['volume'] > curr['vol_sma'] * config.VOLUME_INSTITUTIONAL_MULT)
         
         # ATR-based Risk
         raw_sl_pct = (curr['atr'] * 1.5) / current_px

@@ -18,8 +18,8 @@ EMA_50 = 50
 EMA_100 = 100
 EMA_200 = 200
 RSI_PERIOD = 14
-RSI_OVERSOLD = 30 # Stricter oversold condition
-RSI_OVERBOUGHT = 70 # Stricter overbought condition
+RSI_OVERSOLD = 40 # Relaxed to catch pullbacks in uptrend
+RSI_OVERBOUGHT = 60 # Relaxed to catch pullbacks in downtrend
 BB_LENGTH = 20
 BB_STD = 2.2 # Sniper precision
 
@@ -28,7 +28,7 @@ FVG_MIN_PCT = 0.001  # 0.1% minimum gap size
 OTE_LOW = 0.618      # Fibonacci 61.8%
 OTE_HIGH = 0.786     # Fibonacci 78.6%
 STRUCT_LOOKBACK = 20 # Lookback for Market Structure
-VOLUME_INSTITUTIONAL_MULT = 1.5 # 1.5x average volume for institutional confirm
+VOLUME_INSTITUTIONAL_MULT = 1.2 # 1.2x average volume for institutional confirm
 
 # Golden Confluence Additions
 MACD_FAST = 12
@@ -37,7 +37,7 @@ MACD_SIGNAL = 9
 VOL_SMA_PERIOD = 20
 ATR_PERIOD = 14
 ADX_PERIOD = 14
-ADX_THRESHOLD = 25 # Minimum trend strength required
+ADX_THRESHOLD = 20 # Minimum trend strength required
 SUPERTREND_LENGTH = 10
 SUPERTREND_MULTIPLIER = 3.0
 
