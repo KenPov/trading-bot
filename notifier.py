@@ -25,6 +25,8 @@ def send_telegram_message(message):
             timeout=15, 
             headers={"Connection": "close"}
         )
+        if response.status_code != 200:
+            print(f"[ERROR] Telegram API Response: {response.text}")
         response.raise_for_status()
     except Exception as e:
         print(f"[ERROR] Failed to send Telegram message: {e}")
