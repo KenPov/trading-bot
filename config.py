@@ -1,49 +1,59 @@
 import os
+from dotenv import load_dotenv
+
+# Load environment variables if present (useful for local development or CI)
+load_dotenv()
 
 # Telegram Credentials
-TELEGRAM_BOT_TOKEN = "8317215211:AAFR_pTgQptiT5N79Y9VzcftotceBbXLAhE"
-TELEGRAM_CHAT_ID = "-1003708562178"
+# Fallback to the user's hardcoded credentials, but prioritize environment variables
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8317215211:AAFR_pTgQptiT5N79Y9VzcftotceBbXLAhE")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003708562178")
 
-# Scanning configuration
+# Scanning Configuration
 EXCHANGE_ID = 'mexc'
-MAX_COINS = 250 # Dynamically scans the top 250 most active coins
-TIMEFRAME_ENTRY = "15m"
-TIMEFRAME_MACRO = "1h"
+CHECK_INTERVAL_SECONDS = 60   # Scan every 1 minute
+ACTIVE_COINS_TO_SCAN = 20     # Dynamically scan the top 20 most active moving coins
+MIN_24H_VOLUME = 5000000      # Only scan coins with > $5,000,000 24h volume (no low-liquidity/silent coins)
+TIMEFRAME_ENTRY = "5m"        # Entry signal timeframe (ultra-responsive 5-minute candles)
+TIMEFRAME_TREND = "15m"       # Macro trend alignment timeframe
 
-# Exclude stablecoins and low-liquidity pairs
-STABLECOINS = ['USDC/USDT', 'DAI/USDT', 'USDG/USDT', 'USDE/USDT', 'PYUSD/USDT', 'FDUSD/USDT', 'TUSD/USDT', 'BUSD/USDT']
+# Exclude stablecoins and non-volatile index assets
+STABLECOINS = [
+    'USDC/USDT', 'DAI/USDT', 'USDG/USDT', 'USDE/USDT', 
+    'PYUSD/USDT', 'FDUSD/USDT', 'TUSD/USDT', 'BUSD/USDT'
+]
 
-# Strategy Parameters
-EMA_50 = 50
-EMA_100 = 100
-EMA_200 = 200
+# Whale Pump & Dump / Flash Manipulation Filter
+# Compares current candle range and volume against the statistical average of recent history
+WHALE_RANGE_MULTIPLIER = 3.5  # Reject if candle price range is > 3.5x standard deviation of the last 20 candles
+WHALE_VOLUME_MULTIPLIER = 4.0 # Reject if candle volume is > 4.0x standard deviation of the last 20 candles
+WHALE_WICK_THRESHOLD = 0.65   # Reject if wick length represents > 65% of the total high-low range (flash rejection)
+
+# Technical Indicator Parameters
+EMA_FAST = 20                 # Fast trend EMA
+EMA_SLOW = 50                 # Slow trend EMA
 RSI_PERIOD = 14
-RSI_OVERSOLD = 40 # Relaxed to catch pullbacks in uptrend
-RSI_OVERBOUGHT = 60 # Relaxed to catch pullbacks in downtrend
-BB_LENGTH = 20
-BB_STD = 2.2 # Sniper precision
+# RSI bounds to ensure we enter inside a strong moving trend but NOT overbought/oversold (leaves room to run)
+RSI_LONG_MIN = 50
+RSI_LONG_MAX = 68
+RSI_SHORT_MIN = 32
+RSI_SHORT_MAX = 50
 
-# Professional Trader Strategy Parameters (SMC/ICT)
-FVG_MIN_PCT = 0.001  # 0.1% minimum gap size
-OTE_LOW = 0.618      # Fibonacci 61.8%
-OTE_HIGH = 0.786     # Fibonacci 78.6%
-STRUCT_LOOKBACK = 20 # Lookback for Market Structure
-VOLUME_INSTITUTIONAL_MULT = 1.2 # 1.2x average volume for institutional confirm
-
-# Golden Confluence Additions
+# MACD Settings
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
-VOL_SMA_PERIOD = 20
-ATR_PERIOD = 14
+
+# ADX Trend Strength Filter
 ADX_PERIOD = 14
-ADX_THRESHOLD = 20 # Minimum trend strength required
-SUPERTREND_LENGTH = 10
-SUPERTREND_MULTIPLIER = 3.0
+ADX_MIN = 20                  # Minimum ADX value ensuring a strong active trend (not ranging/silent)
 
-# Risk Reward for X75 Leverage
-MAX_SL_PERCENT = 0.012 # Strict SL cap at 1.2% to avoid liquidation at 75x
-MIN_RR_RATIO = 2.5 # Target a 1:2.5 Risk-to-Reward Ratio
+# ATR & Risk Management Parameters
+ATR_PERIOD = 14
+RISK_REWARD_RATIO = 1.5       # Target a clean 1:1.5 Risk-to-Reward ratio
+MAX_SL_PERCENT = 0.015        # Strict stop loss cap at 1.5% to protect margin
+LEVERAGE = 20                 # Recommended leverage level for futures signals (20x)
 
-CHECK_INTERVAL_SECONDS = 60 
-SIGNAL_COOLDOWN_MINUTES = 120 
+# Signal Tracking and Cooldown
+SIGNAL_COOLDOWN_MINUTES = 30  # Wait at least 30 minutes before sending another signal for the same coin
+SIGNAL_TRACKER_FILE = "last_signals.json"

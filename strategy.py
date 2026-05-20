@@ -3,357 +3,294 @@ import pandas as pd
 import pandas_ta_classic as ta
 import config
 import time
+import numpy as np
 
-# Create global exchange instances
+# Initialize global MEXC exchange instance
 exchange = ccxt.mexc({'enableRateLimit': True})
 
 def get_active_usdt_markets():
     """
-    Dynamically finds the 'Best Coins' for professional trading.
-    Prioritizes high-volume, liquid markets that follow structural patterns.
+    Fetches all tickers from MEXC, filters out stablecoins and low-liquidity coins,
+    and returns the top ACTIVE_COINS_TO_SCAN coins with the highest absolute 24h volatility/movement.
+    This guarantees we ONLY trade coins that are moving.
     """
     try:
-        # Fetch MEXC tickers for volume and price data
+        print("[INFO] Fetching market tickers from MEXC...")
         tickers = exchange.fetch_tickers()
         
         candidates = []
         for symbol, data in tickers.items():
-            # Filter: Must be USDT, not a stablecoin, and must have a price
+            # Check 1: Must be a USDT pair, not a stablecoin, and have active price data
             if '/USDT' in symbol and symbol not in config.STABLECOINS:
                 quote_volume = data.get('quoteVolume', 0)
                 last_price = data.get('last', 0)
+                change_pct = data.get('percentage', 0) # 24h change percentage
                 
-                # Professional Filter:
-                # 1. Minimum Volume ($1,000,000+ per 24h for basic liquidity)
-                # 2. Exclude extremely cheap 'shitcoins' with too many zeros (manipulation risk)
-                if quote_volume and quote_volume > 1000000 and last_price > 0.00001:
+                # Filter out low-price meme/shitcoins to reduce extreme manipulation risks
+                if quote_volume and quote_volume > config.MIN_24H_VOLUME and last_price > 0.00001:
                     candidates.append({
                         "symbol": symbol,
                         "volume": quote_volume,
-                        "change": abs(data.get('percentage', 0)) # Volatility/Trendiness
+                        "change_abs": abs(change_pct) if change_pct is not None else 0,
+                        "change_raw": change_pct if change_pct is not None else 0
                     })
         
-        # Sort by Volume first, then by movement (Trendiness)
-        candidates.sort(key=lambda x: x['volume'], reverse=True)
+        # Sort by absolute 24h price change (movers) to find the most volatile, active coins
+        candidates.sort(key=lambda x: x['change_abs'], reverse=True)
         
-        # Take the top MAX_COINS (e.g., top 250)
-        final_list = [c['symbol'] for c in candidates[:config.MAX_COINS]]
+        # Take the top ACTIVE_COINS_TO_SCAN coins
+        final_list = [c['symbol'] for c in candidates[:config.ACTIVE_COINS_TO_SCAN]]
         
         if not final_list:
-            print("⚠️ No suitable coins found based on volume filters.")
-            return ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'] # Core fallback
+            print("[WARNING] No highly active markets met the volume filters. Falling back to core majors.")
+            return ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT']
             
+        print(f"[SUCCESS] Found {len(final_list)} highly active moving coins for scanning.")
         return final_list
         
     except Exception as e:
-        print(f"Error fetching MEXC markets: {e}")
-        return ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
+        print(f"[ERROR] Error fetching active markets: {e}")
+        return ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT']
 
-def fetch_data(symbol, timeframe, limit):
-    """Fetches OHLCV data from MEXC using the shared instance."""
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df.set_index('timestamp', inplace=True)
-    return df
-
-def get_sr_levels(df, window=5):
+def fetch_data(symbol, timeframe, limit=100):
     """
-    Identifies significant Support and Resistance levels using local extrema.
+    Fetches OHLCV data from MEXC with rate limit safety and retries.
     """
-    levels = []
-    for i in range(window, len(df) - window):
-        # Resistance (Local High)
-        if df['high'].iloc[i] == df['high'].iloc[i-window:i+window+1].max():
-            levels.append({"price": df['high'].iloc[i], "type": "RESISTANCE"})
-        # Support (Local Low)
-        if df['low'].iloc[i] == df['low'].iloc[i-window:i+window+1].min():
-            levels.append({"price": df['low'].iloc[i], "type": "SUPPORT"})
-    return levels
+    retries = 2
+    for attempt in range(retries):
+        try:
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+            return df
+        except Exception as e:
+            if attempt == retries - 1:
+                print(f"[ERROR] Failed to fetch data for {symbol} on {timeframe} after {retries} attempts: {e}")
+                return pd.DataFrame()
+            time.sleep(0.5)
+    return pd.DataFrame()
 
-def detect_fvg(df):
-    """Detects the most recent Fair Value Gap (Imbalance)."""
-    # Bullish FVG: Low of candle[i] > High of candle[i-2]
-    # Bearish FVG: High of candle[i] < Low of candle[i-2]
+def is_whale_pump_dump(df):
+    """
+    Detects if the coin has been subject to sudden, extreme whale pump/dump manipulation.
+    Uses mean and standard deviation analysis on the previous 20 candles to isolate statistical outliers.
+    """
+    if len(df) < 25:
+        return False
+        
+    # We inspect the latest completed candle [-2] and the current active candle [-1]
+    # Reference range is the 20 candles before them
+    ref_df = df.iloc[-22:-2]
     
-    last_3 = df.iloc[-3:]
-    curr_low = last_3.iloc[-1]['low']
-    curr_high = last_3.iloc[-1]['high']
-    prev2_high = last_3.iloc[-3]['high']
-    prev2_low = last_3.iloc[-3]['low']
+    # Calculate price range percentage for each reference candle: (High - Low) / Low * 100
+    ref_ranges_pct = ((ref_df['high'] - ref_df['low']) / ref_df['low']) * 100
+    ref_volumes = ref_df['volume']
     
-    # Bullish FVG
-    if curr_low > prev2_high:
-        gap = curr_low - prev2_high
-        if gap / prev2_high > config.FVG_MIN_PCT:
-            return {"type": "BULLISH", "top": curr_low, "bottom": prev2_high}
-            
-    # Bearish FVG
-    if curr_high < prev2_low:
-        gap = prev2_low - curr_high
-        if gap / curr_high > config.FVG_MIN_PCT:
-            return {"type": "BEARISH", "top": prev2_low, "bottom": curr_high}
-            
-    return None
-
-def detect_msb(df, direction):
-    """Detects Market Structure Break (MSB)."""
-    lookback = config.STRUCT_LOOKBACK
-    recent_data = df.iloc[-(lookback+1):-1]
+    # Compute statistical baselines (mean and standard deviation)
+    mean_range = ref_ranges_pct.mean()
+    std_range = ref_ranges_pct.std()
+    mean_volume = ref_volumes.mean()
+    std_volume = ref_volumes.std()
     
-    if direction == "LONG":
-        # Break of recent Swing High
-        recent_high = recent_data['high'].max()
-        if df.iloc[-1]['close'] > recent_high:
+    # Avoid zero division or overly tight metrics on extremely flat history
+    std_range = max(std_range, 0.05)
+    std_volume = max(std_volume, 1.0)
+    
+    # Test both the latest completed candle and the active forming candle
+    test_candles = [df.iloc[-2], df.iloc[-1]]
+    
+    for i, candle in enumerate(test_candles):
+        # Calculate current candle metrics
+        c_range_pct = ((candle['high'] - candle['low']) / candle['low']) * 100
+        c_volume = candle['volume']
+        
+        # Wick check (sum of wicks vs entire candle height)
+        # Rejection wick size = total height - body size
+        c_height = candle['high'] - candle['low']
+        c_body = abs(candle['close'] - candle['open'])
+        c_wick = c_height - c_body
+        c_wick_ratio = (c_wick / c_height) if c_height > 0 else 0
+        
+        # Condition A: Extreme simultaneous price & volume outlier (Standard Pump & Dump)
+        is_price_outlier = c_range_pct > (mean_range + config.WHALE_RANGE_MULTIPLIER * std_range)
+        is_volume_outlier = c_volume > (mean_volume + config.WHALE_VOLUME_MULTIPLIER * std_volume)
+        
+        if is_price_outlier and is_volume_outlier:
+            candle_desc = "active" if i == 1 else "previous completed"
+            print(f"[FILTERED] Whale pump/dump detected on {candle_desc} candle. Price range outlier: {c_range_pct:.2f}% (avg: {mean_range:.2f}%), Volume outlier: {c_volume:.0f} (avg: {mean_volume:.0f}).")
             return True
-    else:
-        # Break of recent Swing Low
-        recent_low = recent_data['low'].min()
-        if df.iloc[-1]['close'] < recent_low:
+            
+        # Condition B: Extreme flash rejection (long wicks on high volume, i.e., dump-and-pump or pump-and-dump rejection)
+        if c_wick_ratio > config.WHALE_WICK_THRESHOLD and c_range_pct > (mean_range + 1.5 * std_range) and is_volume_outlier:
+            candle_desc = "active" if i == 1 else "previous completed"
+            print(f"[FILTERED] Flash whale wick manipulation detected on {candle_desc} candle. Wick ratio: {c_wick_ratio:.2%} (limit: {config.WHALE_WICK_THRESHOLD:.2%}).")
             return True
+            
     return False
 
-def calculate_ote(df, direction):
-    """Calculates Optimal Trade Entry levels based on the recent swing leg."""
-    lookback = config.STRUCT_LOOKBACK
-    recent_data = df.iloc[-lookback:]
-    
-    if direction == "LONG":
-        low = recent_data['low'].min()
-        high = recent_data['high'].max()
-        diff = high - low
-        ote_top = high - (diff * config.OTE_LOW)
-        ote_bottom = high - (diff * config.OTE_HIGH)
-        return {"top": ote_top, "bottom": ote_bottom}
-    else:
-        high = recent_data['high'].max()
-        low = recent_data['low'].min()
-        diff = high - low
-        ote_top = low + (diff * config.OTE_HIGH)
-        ote_bottom = low + (diff * config.OTE_LOW)
-        return {"top": ote_top, "bottom": ote_bottom}
-
-def analyze_trend_pullback(symbol):
+def analyze_futures_strategy(symbol):
     """
-    Professional Sniper Strategy with SMC, OTE, and Market Structure.
+    Main strategy generator targeting moving coins.
+    Confluence indicators: Dual EMA (20/50), RSI (strength bounds), MACD (momentum), ADX (trend strength).
+    Risk settings: ATR-based dynamic Stop Loss and Take Profit.
     """
     try:
-        # 1. Macro Trend Check (1 Hour)
-        df_1h = fetch_data(symbol, config.TIMEFRAME_MACRO, 250)
-        if len(df_1h) < 250: return {"setup_found": False}
-        
-        df_1h['ema_50'] = ta.ema(df_1h['close'], length=config.EMA_50)
-        df_1h['ema_100'] = ta.ema(df_1h['close'], length=config.EMA_100)
-        df_1h['ema_200'] = ta.ema(df_1h['close'], length=config.EMA_200)
-        current_1h_close = df_1h.iloc[-1]['close']
-        
-        # Relaxed Macro Trend: Just check 50/100 EMA and price above/below
-        macro_bullish = (df_1h.iloc[-1]['ema_50'] > df_1h.iloc[-1]['ema_100']) and (current_1h_close > df_1h.iloc[-1]['ema_100'])
-        macro_bearish = (df_1h.iloc[-1]['ema_50'] < df_1h.iloc[-1]['ema_100']) and (current_1h_close < df_1h.iloc[-1]['ema_100'])
+        # 1. Fetch entry timeframe data (5m)
+        df_5m = fetch_data(symbol, config.TIMEFRAME_ENTRY, limit=100)
+        if df_5m.empty or len(df_5m) < 50:
+            return {"setup_found": False, "reason": "Insufficient 5m historical data"}
+            
+        # 2. Fetch macro trend timeframe data (15m)
+        df_15m = fetch_data(symbol, config.TIMEFRAME_TREND, limit=100)
+        if df_15m.empty or len(df_15m) < 50:
+            return {"setup_found": False, "reason": "Insufficient 15m trend data"}
 
-        # 2. Entry Timeframe Analysis (15 Minutes)
-        df = fetch_data(symbol, config.TIMEFRAME_ENTRY, 250)
-        if len(df) < 250: return {"setup_found": False}
+        # 3. Apply Whale Pump & Dump Filter immediately
+        if is_whale_pump_dump(df_5m):
+            return {"setup_found": False, "reason": "Whale Pump/Dump detection flagged"}
+            
+        # --- MACRO TREND ALIGNMENT (15m) ---
+        df_15m['ema_fast'] = ta.ema(df_15m['close'], length=config.EMA_FAST)
+        df_15m['ema_slow'] = ta.ema(df_15m['close'], length=config.EMA_SLOW)
         
-        # Calculate Indicators
-        df['ema_50'] = ta.ema(df['close'], length=config.EMA_50)
-        df['ema_100'] = ta.ema(df['close'], length=config.EMA_100)
-        df['ema_200'] = ta.ema(df['close'], length=config.EMA_200)
+        macro_close = df_15m.iloc[-1]['close']
+        macro_ema20 = df_15m.iloc[-1]['ema_fast']
+        macro_ema50 = df_15m.iloc[-1]['ema_slow']
         
-        # Supertrend
-        supertrend = ta.supertrend(df['high'], df['low'], df['close'], length=config.SUPERTREND_LENGTH, multiplier=config.SUPERTREND_MULTIPLIER)
-        df['supertrend_dir'] = supertrend[f'SUPERTd_{config.SUPERTREND_LENGTH}_{config.SUPERTREND_MULTIPLIER.is_integer() and int(config.SUPERTREND_MULTIPLIER) or config.SUPERTREND_MULTIPLIER}.0'] if f'SUPERTd_{config.SUPERTREND_LENGTH}_{config.SUPERTREND_MULTIPLIER.is_integer() and int(config.SUPERTREND_MULTIPLIER) or config.SUPERTREND_MULTIPLIER}.0' in supertrend.columns else supertrend.iloc[:, 1]
+        macro_bullish = macro_close > macro_ema20 > macro_ema50
+        macro_bearish = macro_close < macro_ema20 < macro_ema50
         
-        # ADX, RSI, ATR, MACD, etc.
-        adx_df = ta.adx(df['high'], df['low'], df['close'], length=config.ADX_PERIOD)
-        df['adx'] = adx_df[f'ADX_{config.ADX_PERIOD}']
-        df['rsi'] = ta.rsi(df['close'], length=config.RSI_PERIOD)
-        df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=config.ATR_PERIOD)
-        df['vol_sma'] = ta.sma(df['volume'], length=config.VOL_SMA_PERIOD)
+        if not macro_bullish and not macro_bearish:
+            return {"setup_found": False, "reason": "Macro trend is not strongly aligned"}
+
+        # --- ENTRY CONFLUENCE CALCULATION (5m) ---
+        # Calculate Dual EMA
+        df_5m['ema_fast'] = ta.ema(df_5m['close'], length=config.EMA_FAST)
+        df_5m['ema_slow'] = ta.ema(df_5m['close'], length=config.EMA_SLOW)
         
-        # MACD
-        macd_df = ta.macd(df['close'], fast=config.MACD_FAST, slow=config.MACD_SLOW, signal=config.MACD_SIGNAL)
+        # Calculate RSI
+        df_5m['rsi'] = ta.rsi(df_5m['close'], length=config.RSI_PERIOD)
+        
+        # Calculate ADX
+        adx_df = ta.adx(df_5m['high'], df_5m['low'], df_5m['close'], length=config.ADX_PERIOD)
+        df_5m['adx'] = adx_df[f'ADX_{config.ADX_PERIOD}']
+        
+        # Calculate MACD
+        macd_df = ta.macd(df_5m['close'], fast=config.MACD_FAST, slow=config.MACD_SLOW, signal=config.MACD_SIGNAL)
         macd_hist_col = [c for c in macd_df.columns if 'MACDh' in c][0]
-        df['macd_hist'] = macd_df[macd_hist_col]
+        df_5m['macd_hist'] = macd_df[macd_hist_col]
         
-        # Bollinger Bands
-        bbands = ta.bbands(df['close'], length=config.BB_LENGTH, std=config.BB_STD)
-        df['bb_lower'] = bbands[f'BBL_{config.BB_LENGTH}_{config.BB_STD}']
-        df['bb_upper'] = bbands[f'BBU_{config.BB_LENGTH}_{config.BB_STD}']
+        # Calculate ATR for dynamic risk pricing
+        df_5m['atr'] = ta.atr(df_5m['high'], df_5m['low'], df_5m['close'], length=config.ATR_PERIOD)
         
-        # Professional Filters
-        fvg = detect_fvg(df)
+        # Retrieve latest candles
+        curr = df_5m.iloc[-1]
+        prev = df_5m.iloc[-2]
+        prev2 = df_5m.iloc[-3]
         
-        curr = df.iloc[-1]
-        prev = df.iloc[-2]
+        current_price = curr['close']
+        atr_value = curr['atr']
         
-        current_px = curr['close']
-        # Relaxed ADX: If trend is strong OR if we have Supertrend alignment
-        adx_strong = curr['adx'] > config.ADX_THRESHOLD or (curr['adx'] > 12)
-        st_bullish = curr['supertrend_dir'] == 1
-        st_bearish = curr['supertrend_dir'] == -1
-        
-        # Institutional Volume Confirm (check previous closed candle OR current spike)
-        vol_confirm = (prev['volume'] > prev['vol_sma'] * config.VOLUME_INSTITUTIONAL_MULT) or \
-                      (curr['volume'] > curr['vol_sma'] * config.VOLUME_INSTITUTIONAL_MULT)
-        
-        # ATR-based Risk
-        raw_sl_pct = (curr['atr'] * 1.5) / current_px
-        sl_pct = min(raw_sl_pct, config.MAX_SL_PERCENT)
-        tp_pct = sl_pct * config.MIN_RR_RATIO
-        
-        # --- LONG SETUP ---
-        if macro_bullish and adx_strong and st_bullish:
-            # 1. Market Structure Break (Wait for pullback then break high)
-            msb = detect_msb(df, "LONG")
-            
-            # 2. OTE Zone Check
-            ote = calculate_ote(df, "LONG")
-            in_ote_zone = current_px <= ote['top'] and current_px >= ote['bottom']
-            
-            # 3. RSI Hook
-            rsi_hook = df['rsi'].iloc[-4:-1].min() < config.RSI_OVERSOLD and curr['rsi'] > prev['rsi']
-            
-            # Confluence: FVG detected recently OR In OTE Zone OR MSB occurred
-            professional_confirm = msb or in_ote_zone or (fvg and fvg['type'] == "BULLISH")
-            
-            if professional_confirm and vol_confirm and rsi_hook:
-                return {
-                    "setup_found": True, "direction": "LONG", "symbol": symbol,
-                    "entry_price": current_px, "tp": current_px * (1 + tp_pct),
-                    "sl": current_px * (1 - sl_pct),
-                    "signal_id": f"LONG_{int(time.time())}_{symbol}",
-                    "strategy": "PRO_SNIPER_SMC"
-                }
+        # Trend strength check
+        trend_strong = curr['adx'] >= config.ADX_MIN
+        if not trend_strong:
+            return {"setup_found": False, "reason": f"ADX too low ({curr['adx']:.1f} < {config.ADX_MIN})"}
 
-        # --- SHORT SETUP ---
-        if macro_bearish and adx_strong and st_bearish:
-            # 1. Market Structure Break
-            msb = detect_msb(df, "SHORT")
+        # --- LONG SIGNAL DETECTION ---
+        if macro_bullish:
+            # 5m Trend confirmation
+            entry_trend_bullish = current_price > curr['ema_fast'] > curr['ema_slow']
             
-            # 2. OTE Zone Check
-            ote = calculate_ote(df, "SHORT")
-            in_ote_zone = current_px >= ote['top'] and current_px <= ote['bottom']
+            # Pullback logic: Close is resting near the EMA 20, OR EMA 20 crossed over EMA 50 within the last 3 candles
+            near_ema20 = abs(current_price - curr['ema_fast']) / curr['ema_fast'] <= 0.003
+            in_ema_pocket = curr['ema_slow'] <= current_price <= curr['ema_fast']
+            ema_cross = (prev['ema_fast'] <= prev['ema_slow'] and curr['ema_fast'] > curr['ema_slow']) or \
+                        (prev2['ema_fast'] <= prev2['ema_slow'] and prev['ema_fast'] > prev['ema_slow'])
             
-            # 3. RSI Hook
-            rsi_hook = df['rsi'].iloc[-4:-1].max() > config.RSI_OVERBOUGHT and curr['rsi'] < prev['rsi']
+            pullback_confirmed = near_ema20 or in_ema_pocket or ema_cross
             
-            # Confluence
-            professional_confirm = msb or in_ote_zone or (fvg and fvg['type'] == "BEARISH")
+            # RSI momentum space: strong, active, but has room to climb (not overbought)
+            rsi_confirmed = config.RSI_LONG_MIN <= curr['rsi'] <= config.RSI_LONG_MAX
             
-            if professional_confirm and vol_confirm and rsi_hook:
-                return {
-                    "setup_found": True, "direction": "SHORT", "symbol": symbol,
-                    "entry_price": current_px, "tp": current_px * (1 - tp_pct),
-                    "sl": current_px * (1 + sl_pct),
-                    "signal_id": f"SHORT_{int(time.time())}_{symbol}",
-                    "strategy": "PRO_SNIPER_SMC"
-                }
+            # MACD bullish momentum: positive and increasing histogram
+            macd_confirmed = curr['macd_hist'] > 0 and curr['macd_hist'] > prev['macd_hist']
+            
+            if entry_trend_bullish and pullback_confirmed and rsi_confirmed and macd_confirmed:
+                # Dynamic ATR-based Stop Loss (1.5 * ATR below current price)
+                sl = current_price - (atr_value * 1.5)
+                sl_pct = (current_price - sl) / current_price
                 
-    except Exception as e:
-        print(f"Error analyzing {symbol}: {e}")
-        pass
-        
-    return {"setup_found": False}
-
-def analyze_sr_opportunity(symbol):
-    """
-    Analyzes asset for 4h S/R opportunities. Returns a score and setup details.
-    """
-    try:
-        # 1. Fetch 4h Data for S/R levels
-        df_4h = fetch_data(symbol, config.TIMEFRAME_SR, 100)
-        if len(df_4h) < 20: return None
-        
-        levels = get_sr_levels(df_4h)
-        current_px = df_4h.iloc[-1]['close']
-        
-        # 2. Find closest levels
-        support_levels = [l['price'] for l in levels if l['type'] == "SUPPORT" and l['price'] < current_px]
-        resistance_levels = [l['price'] for l in levels if l['type'] == "RESISTANCE" and l['price'] > current_px]
-        
-        nearest_support = max(support_levels) if support_levels else None
-        nearest_resistance = min(resistance_levels) if resistance_levels else None
-        
-        # 3. Calculate Scoring
-        # Scoring is based on proximity to level. Closer to level = higher score (potential bounce).
-        score = 0
-        setup = None
-        
-        if nearest_support:
-            dist_pct = (current_px - nearest_support) / nearest_support
-            if dist_pct < 0.02: # Within 2% of support
-                score = 100 - (dist_pct * 1000) # Higher score if closer
-                setup = {
+                # Enforce Strict Maximum SL Limit
+                if sl_pct > config.MAX_SL_PERCENT:
+                    sl = current_price * (1.0 - config.MAX_SL_PERCENT)
+                    sl_pct = config.MAX_SL_PERCENT
+                
+                # Take Profit based on exact Risk Reward Ratio
+                tp = current_price + (current_price - sl) * config.RISK_REWARD_RATIO
+                
+                return {
+                    "setup_found": True,
+                    "direction": "LONG",
                     "symbol": symbol,
-                    "direction": "LONG (Support Bounce)",
-                    "price": current_px,
-                    "level": nearest_support,
-                    "type": "SUPPORT",
-                    "score": score
+                    "entry_price": current_price,
+                    "tp": tp,
+                    "sl": sl,
+                    "sl_pct": sl_pct * 100,
+                    "leverage": config.LEVERAGE,
+                    "rsi": curr['rsi'],
+                    "adx": curr['adx'],
+                    "strategy": "MOMENTUM_PULLBACK_5M"
                 }
+
+        # --- SHORT SIGNAL DETECTION ---
+        if macro_bearish:
+            # 5m Trend confirmation
+            entry_trend_bearish = current_price < curr['ema_fast'] < curr['ema_slow']
+            
+            # Pullback logic: Close is resting near the EMA 20, OR EMA 20 crossed below EMA 50 within the last 3 candles
+            near_ema20 = abs(current_price - curr['ema_fast']) / curr['ema_fast'] <= 0.003
+            in_ema_pocket = curr['ema_fast'] <= current_price <= curr['ema_slow']
+            ema_cross = (prev['ema_fast'] >= prev['ema_slow'] and curr['ema_fast'] < curr['ema_slow']) or \
+                        (prev2['ema_fast'] >= prev2['ema_slow'] and prev['ema_fast'] < prev['ema_slow'])
+            
+            pullback_confirmed = near_ema20 or in_ema_pocket or ema_cross
+            
+            # RSI momentum space: strong downward trend, but has room to drop (not oversold)
+            rsi_confirmed = config.RSI_SHORT_MIN <= curr['rsi'] <= config.RSI_SHORT_MAX
+            
+            # MACD bearish momentum: negative and decreasing histogram
+            macd_confirmed = curr['macd_hist'] < 0 and curr['macd_hist'] < prev['macd_hist']
+            
+            if entry_trend_bearish and pullback_confirmed and rsi_confirmed and macd_confirmed:
+                # Dynamic ATR-based Stop Loss (1.5 * ATR above current price)
+                sl = current_price + (atr_value * 1.5)
+                sl_pct = (sl - current_price) / current_price
                 
-        if nearest_resistance:
-            dist_pct = (nearest_resistance - current_px) / current_px
-            if dist_pct < 0.02: # Within 2% of resistance
-                res_score = 100 - (dist_pct * 1000)
-                if res_score > score: # Take the better setup
-                    score = res_score
-                    setup = {
-                        "symbol": symbol,
-                        "direction": "SHORT (Resist Rejection)",
-                        "price": current_px,
-                        "level": nearest_resistance,
-                        "type": "RESISTANCE",
-                        "score": score
-                    }
-        
-        return setup if score > 0 else None
+                # Enforce Strict Maximum SL Limit
+                if sl_pct > config.MAX_SL_PERCENT:
+                    sl = current_price * (1.0 + config.MAX_SL_PERCENT)
+                    sl_pct = config.MAX_SL_PERCENT
+                
+                # Take Profit based on exact Risk Reward Ratio
+                tp = current_price - (sl - current_price) * config.RISK_REWARD_RATIO
+                
+                return {
+                    "setup_found": True,
+                    "direction": "SHORT",
+                    "symbol": symbol,
+                    "entry_price": current_price,
+                    "tp": tp,
+                    "sl": sl,
+                    "sl_pct": sl_pct * 100,
+                    "leverage": config.LEVERAGE,
+                    "rsi": curr['rsi'],
+                    "adx": curr['adx'],
+                    "strategy": "MOMENTUM_PULLBACK_5M"
+                }
+
+        return {"setup_found": False, "reason": "Technical indicators did not align"}
         
     except Exception as e:
-        print(f"Error scoring {symbol}: {e}")
-        return None
-
-def analyze_1h_movement(symbol):
-    """
-    Analyzes asset for 1-hour volatility to find the top movers.
-    Returns a score based on the high-low percentage range of the recent 1h candle.
-    """
-    try:
-        # Fetch 1h Data
-        df = fetch_data(symbol, "1h", 3)
-        if len(df) < 2: return None
-        
-        # Use the most recently closed candle for a stable metric (or the currently forming one)
-        curr = df.iloc[-1]
-        
-        # Calculate 1-hour volatility (High - Low range as a percentage)
-        if curr['low'] > 0:
-            volatility_pct = ((curr['high'] - curr['low']) / curr['low']) * 100
-            change_pct = ((curr['close'] - curr['open']) / curr['open']) * 100
-        else:
-            return None
-            
-        # We only want coins that are moving
-        score = volatility_pct 
-        
-        direction = "LONG (Uptrending)" if change_pct > 0 else "SHORT (Downtrending)"
-        
-        # Minimum 0.5% movement in the last hour to be considered "moving"
-        if score > 0.5:
-            return {
-                "symbol": symbol,
-                "direction": direction,
-                "price": curr['close'],
-                "volatility": volatility_pct,
-                "change": change_pct,
-                "score": score
-            }
-            
-        return None
-        
-    except Exception as e:
-        print(f"Error analyzing 1h movement for {symbol}: {e}")
-        return None
-
-
+        print(f"[ERROR] Error analyzing strategy for {symbol}: {e}")
+        return {"setup_found": False, "reason": f"Execution error: {e}"}
