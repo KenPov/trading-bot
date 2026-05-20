@@ -12,8 +12,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003708562178")
 # Scanning Configuration
 EXCHANGE_ID = 'mexc'
 CHECK_INTERVAL_SECONDS = 60   # Scan every 1 minute
-ACTIVE_COINS_TO_SCAN = 20     # Dynamically scan the top 20 most active moving coins
-MIN_24H_VOLUME = 5000000      # Only scan coins with > $5,000,000 24h volume (no low-liquidity/silent coins)
+ACTIVE_COINS_TO_SCAN = 100     # Dynamically scan the top 100 most active moving coins
+MIN_24H_VOLUME = 1000000       # Only scan coins with > $1,000,000 24h volume (ensures basic futures liquidity)
 TIMEFRAME_ENTRY = "5m"        # Entry signal timeframe (ultra-responsive 5-minute candles)
 TIMEFRAME_TREND = "15m"       # Macro trend alignment timeframe
 
