@@ -3,8 +3,8 @@ import json
 import os
 import config
 from concurrent.futures import ThreadPoolExecutor
-from strategy import get_active_usdt_markets, analyze_trend_pullback, fetch_data
-from notifier import send_startup_message, send_signal
+from strategy import get_active_usdt_markets, analyze_1h_movement, fetch_data
+from notifier import send_startup_message, send_top_5_movers_report
 
 SIGNAL_TRACKER_FILE = "last_signals.json"
 
@@ -45,22 +45,18 @@ def run_once(send_heartbeat=False):
     new_signals_found = False
 
     # Parallel Execution using ThreadPoolExecutor
-    # Reduced max_workers to 3 to prevent MEXC 429 Too Many Requests errors
     with ThreadPoolExecutor(max_workers=3) as executor:
-        results = list(executor.map(analyze_trend_pullback, assets))
-
-    for signal in results:
-        if signal and signal.get("setup_found"):
-            symbol = signal["symbol"]
-            current_time = time.time()
-            last_time = last_signals.get(symbol, 0)
-            
-            if current_time - last_time > (config.SIGNAL_COOLDOWN_MINUTES * 60):
-                direction = signal['direction']
-                print(f"🔥 SNIPER {direction} FOUND: {symbol} @ {signal['entry_price']:.6f}")
-                send_signal(signal)
-                last_signals[symbol] = current_time
-                new_signals_found = True
+        results = list(executor.map(analyze_1h_movement, assets))
+    
+    # Filter out None results and sort by score
+    valid_opportunities = [r for r in results if r is not None]
+    valid_opportunities.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Select top 5
+    top_5 = valid_opportunities[:config.TOP_COINS_COUNT]
+    
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Found {len(valid_opportunities)} moving coins, sending Top 5.")
+    send_top_5_movers_report(top_5)
 
     if new_signals_found:
         save_last_signals(last_signals)

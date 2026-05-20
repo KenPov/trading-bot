@@ -33,15 +33,11 @@ def get_active_usdt_markets():
                         "change": abs(data.get('percentage', 0)) # Volatility/Trendiness
                     })
         
-        # Sort by Volume first (Top 100), then by movement (Trendiness)
+        # Sort by Volume first, then by movement (Trendiness)
         candidates.sort(key=lambda x: x['volume'], reverse=True)
-        top_by_volume = candidates[:100]
         
-        # Of the top volume coins, prioritize those with the most 'clean' movement
-        top_by_volume.sort(key=lambda x: x['change'], reverse=True)
-        
-        # Take the top MAX_COINS (e.g., top 50)
-        final_list = [c['symbol'] for c in top_by_volume[:config.MAX_COINS]]
+        # Take the top MAX_COINS (e.g., top 250)
+        final_list = [c['symbol'] for c in candidates[:config.MAX_COINS]]
         
         if not final_list:
             print("⚠️ No suitable coins found based on volume filters.")
@@ -60,6 +56,20 @@ def fetch_data(symbol, timeframe, limit):
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
     return df
+
+def get_sr_levels(df, window=5):
+    """
+    Identifies significant Support and Resistance levels using local extrema.
+    """
+    levels = []
+    for i in range(window, len(df) - window):
+        # Resistance (Local High)
+        if df['high'].iloc[i] == df['high'].iloc[i-window:i+window+1].max():
+            levels.append({"price": df['high'].iloc[i], "type": "RESISTANCE"})
+        # Support (Local Low)
+        if df['low'].iloc[i] == df['low'].iloc[i-window:i+window+1].min():
+            levels.append({"price": df['low'].iloc[i], "type": "SUPPORT"})
+    return levels
 
 def detect_fvg(df):
     """Detects the most recent Fair Value Gap (Imbalance)."""
@@ -137,8 +147,9 @@ def analyze_trend_pullback(symbol):
         df_1h['ema_200'] = ta.ema(df_1h['close'], length=config.EMA_200)
         current_1h_close = df_1h.iloc[-1]['close']
         
-        macro_bullish = (df_1h.iloc[-1]['ema_50'] > df_1h.iloc[-1]['ema_100']) and (df_1h.iloc[-1]['ema_100'] > df_1h.iloc[-1]['ema_200']) and (current_1h_close > df_1h.iloc[-1]['ema_50'])
-        macro_bearish = (df_1h.iloc[-1]['ema_50'] < df_1h.iloc[-1]['ema_100']) and (df_1h.iloc[-1]['ema_100'] < df_1h.iloc[-1]['ema_200']) and (current_1h_close < df_1h.iloc[-1]['ema_50'])
+        # Relaxed Macro Trend: Just check 50/100 EMA and price above/below
+        macro_bullish = (df_1h.iloc[-1]['ema_50'] > df_1h.iloc[-1]['ema_100']) and (current_1h_close > df_1h.iloc[-1]['ema_100'])
+        macro_bearish = (df_1h.iloc[-1]['ema_50'] < df_1h.iloc[-1]['ema_100']) and (current_1h_close < df_1h.iloc[-1]['ema_100'])
 
         # 2. Entry Timeframe Analysis (15 Minutes)
         df = fetch_data(symbol, config.TIMEFRAME_ENTRY, 250)
@@ -177,7 +188,8 @@ def analyze_trend_pullback(symbol):
         prev = df.iloc[-2]
         
         current_px = curr['close']
-        adx_strong = curr['adx'] > config.ADX_THRESHOLD
+        # Relaxed ADX: If trend is strong OR if we have Supertrend alignment
+        adx_strong = curr['adx'] > config.ADX_THRESHOLD or (curr['adx'] > 12)
         st_bullish = curr['supertrend_dir'] == 1
         st_bearish = curr['supertrend_dir'] == -1
         
@@ -243,3 +255,105 @@ def analyze_trend_pullback(symbol):
         pass
         
     return {"setup_found": False}
+
+def analyze_sr_opportunity(symbol):
+    """
+    Analyzes asset for 4h S/R opportunities. Returns a score and setup details.
+    """
+    try:
+        # 1. Fetch 4h Data for S/R levels
+        df_4h = fetch_data(symbol, config.TIMEFRAME_SR, 100)
+        if len(df_4h) < 20: return None
+        
+        levels = get_sr_levels(df_4h)
+        current_px = df_4h.iloc[-1]['close']
+        
+        # 2. Find closest levels
+        support_levels = [l['price'] for l in levels if l['type'] == "SUPPORT" and l['price'] < current_px]
+        resistance_levels = [l['price'] for l in levels if l['type'] == "RESISTANCE" and l['price'] > current_px]
+        
+        nearest_support = max(support_levels) if support_levels else None
+        nearest_resistance = min(resistance_levels) if resistance_levels else None
+        
+        # 3. Calculate Scoring
+        # Scoring is based on proximity to level. Closer to level = higher score (potential bounce).
+        score = 0
+        setup = None
+        
+        if nearest_support:
+            dist_pct = (current_px - nearest_support) / nearest_support
+            if dist_pct < 0.02: # Within 2% of support
+                score = 100 - (dist_pct * 1000) # Higher score if closer
+                setup = {
+                    "symbol": symbol,
+                    "direction": "LONG (Support Bounce)",
+                    "price": current_px,
+                    "level": nearest_support,
+                    "type": "SUPPORT",
+                    "score": score
+                }
+                
+        if nearest_resistance:
+            dist_pct = (nearest_resistance - current_px) / current_px
+            if dist_pct < 0.02: # Within 2% of resistance
+                res_score = 100 - (dist_pct * 1000)
+                if res_score > score: # Take the better setup
+                    score = res_score
+                    setup = {
+                        "symbol": symbol,
+                        "direction": "SHORT (Resist Rejection)",
+                        "price": current_px,
+                        "level": nearest_resistance,
+                        "type": "RESISTANCE",
+                        "score": score
+                    }
+        
+        return setup if score > 0 else None
+        
+    except Exception as e:
+        print(f"Error scoring {symbol}: {e}")
+        return None
+
+def analyze_1h_movement(symbol):
+    """
+    Analyzes asset for 1-hour volatility to find the top movers.
+    Returns a score based on the high-low percentage range of the recent 1h candle.
+    """
+    try:
+        # Fetch 1h Data
+        df = fetch_data(symbol, "1h", 3)
+        if len(df) < 2: return None
+        
+        # Use the most recently closed candle for a stable metric (or the currently forming one)
+        curr = df.iloc[-1]
+        
+        # Calculate 1-hour volatility (High - Low range as a percentage)
+        if curr['low'] > 0:
+            volatility_pct = ((curr['high'] - curr['low']) / curr['low']) * 100
+            change_pct = ((curr['close'] - curr['open']) / curr['open']) * 100
+        else:
+            return None
+            
+        # We only want coins that are moving
+        score = volatility_pct 
+        
+        direction = "LONG (Uptrending)" if change_pct > 0 else "SHORT (Downtrending)"
+        
+        # Minimum 0.5% movement in the last hour to be considered "moving"
+        if score > 0.5:
+            return {
+                "symbol": symbol,
+                "direction": direction,
+                "price": curr['close'],
+                "volatility": volatility_pct,
+                "change": change_pct,
+                "score": score
+            }
+            
+        return None
+        
+    except Exception as e:
+        print(f"Error analyzing 1h movement for {symbol}: {e}")
+        return None
+
+
