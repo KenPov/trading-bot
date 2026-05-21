@@ -129,168 +129,178 @@ def is_whale_pump_dump(df):
             
     return False
 
-def analyze_futures_strategy(symbol):
+def calculate_sr_levels(df, window=5):
     """
-    Main strategy generator targeting moving coins.
-    Confluence indicators: Dual EMA (20/50), RSI (strength bounds), MACD (momentum), ADX (trend strength).
-    Risk settings: ATR-based dynamic Stop Loss and Take Profit.
+    Finds historical confirmed support (pivot lows) and resistance (pivot highs) levels.
+    Uses a standard pivot fractal algorithm.
+    """
+    lows = df['low'].values
+    highs = df['high'].values
+    n = len(df)
+    
+    support_levels = []
+    resistance_levels = []
+    
+    # Scan historical candles, leaving a margin of 'window' at the end to ensure they are confirmed pivots
+    for i in range(window, n - window):
+        # Pivot Low (Support)
+        is_pivot_low = True
+        for j in range(i - window, i + window + 1):
+            if lows[j] < lows[i]:
+                is_pivot_low = False
+                break
+        if is_pivot_low:
+            support_levels.append(lows[i])
+            
+        # Pivot High (Resistance)
+        is_pivot_high = True
+        for j in range(i - window, i + window + 1):
+            if highs[j] > highs[i]:
+                is_pivot_high = False
+                break
+        if is_pivot_high:
+            resistance_levels.append(highs[i])
+            
+    # Include absolute extreme high and low of the lookback period as major fallback levels
+    support_levels.append(df['low'].min())
+    resistance_levels.append(df['high'].max())
+    
+    return support_levels, resistance_levels
+
+def cluster_levels(levels, threshold_pct=0.0075):
+    """
+    Groups levels that are within threshold_pct of an anchor to prevent chaining
+    and isolate distinct key structural zones.
+    """
+    if not levels:
+        return []
+    sorted_levels = sorted(list(set(levels)))
+    clustered = []
+    current_group = [sorted_levels[0]]
+    
+    for val in sorted_levels[1:]:
+        # Compare to the anchor of the current group to prevent chaining
+        if (val - current_group[0]) / current_group[0] <= threshold_pct:
+            current_group.append(val)
+        else:
+            clustered.append(sum(current_group) / len(current_group))
+            current_group = [val]
+    clustered.append(sum(current_group) / len(current_group))
+    return clustered
+
+
+def analyze_futures_strategy(symbol, timeframe="1h"):
+    """
+    Analyzes an asset on a given timeframe (1h/4h) for high-probability Support & Resistance setups.
+    LONG Setup: Price is close to a confirmed support level (S1) and holding above it.
+    SHORT Setup: Price is close to a confirmed resistance level (R1) and holding below it.
     """
     try:
-        # 1. Fetch entry timeframe data (5m)
-        df_5m = fetch_data(symbol, config.TIMEFRAME_ENTRY, limit=100)
-        if df_5m.empty or len(df_5m) < 50:
-            return {"setup_found": False, "reason": "Insufficient 5m historical data"}
+        # Fetch OHLCV data (e.g. 100 candles of 1h or 4h)
+        df = fetch_data(symbol, timeframe, limit=100)
+        if df.empty or len(df) < 30:
+            return {"setup_found": False, "reason": "Insufficient historical data"}
             
-        # 2. Fetch macro trend timeframe data (15m)
-        df_15m = fetch_data(symbol, config.TIMEFRAME_TREND, limit=100)
-        if df_15m.empty or len(df_15m) < 50:
-            return {"setup_found": False, "reason": "Insufficient 15m trend data"}
-
-        # 3. Apply Whale Pump & Dump Filter immediately
-        if is_whale_pump_dump(df_5m):
+        # Apply Whale Pump & Dump Filter
+        if is_whale_pump_dump(df):
             return {"setup_found": False, "reason": "Whale Pump/Dump detection flagged"}
             
-        # --- MACRO TREND ALIGNMENT (15m) ---
-        df_15m['ema_fast'] = ta.ema(df_15m['close'], length=config.EMA_FAST)
-        df_15m['ema_slow'] = ta.ema(df_15m['close'], length=config.EMA_SLOW)
+        # Calculate Technical Indicators
+        df['rsi'] = ta.rsi(df['close'], length=config.RSI_PERIOD)
+        df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=config.ATR_PERIOD)
         
-        macro_close = df_15m.iloc[-1]['close']
-        macro_ema20 = df_15m.iloc[-1]['ema_fast']
-        macro_ema50 = df_15m.iloc[-1]['ema_slow']
-        
-        macro_bullish = macro_close > macro_ema20 > macro_ema50
-        macro_bearish = macro_close < macro_ema20 < macro_ema50
-        
-        if not macro_bullish and not macro_bearish:
-            return {"setup_found": False, "reason": "Macro trend is not strongly aligned"}
-
-        # --- ENTRY CONFLUENCE CALCULATION (5m) ---
-        # Calculate Dual EMA
-        df_5m['ema_fast'] = ta.ema(df_5m['close'], length=config.EMA_FAST)
-        df_5m['ema_slow'] = ta.ema(df_5m['close'], length=config.EMA_SLOW)
-        
-        # Calculate RSI
-        df_5m['rsi'] = ta.rsi(df_5m['close'], length=config.RSI_PERIOD)
-        
-        # Calculate ADX
-        adx_df = ta.adx(df_5m['high'], df_5m['low'], df_5m['close'], length=config.ADX_PERIOD)
-        df_5m['adx'] = adx_df[f'ADX_{config.ADX_PERIOD}']
-        
-        # Calculate MACD
-        macd_df = ta.macd(df_5m['close'], fast=config.MACD_FAST, slow=config.MACD_SLOW, signal=config.MACD_SIGNAL)
-        macd_hist_col = [c for c in macd_df.columns if 'MACDh' in c][0]
-        df_5m['macd_hist'] = macd_df[macd_hist_col]
-        
-        # Calculate ATR for dynamic risk pricing
-        df_5m['atr'] = ta.atr(df_5m['high'], df_5m['low'], df_5m['close'], length=config.ATR_PERIOD)
-        
-        # Retrieve latest candles
-        curr = df_5m.iloc[-1]
-        prev = df_5m.iloc[-2]
-        prev2 = df_5m.iloc[-3]
-        
+        curr = df.iloc[-1]
         current_price = curr['close']
-        atr_value = curr['atr']
+        atr_val = curr['atr']
+        rsi_val = curr['rsi'] if not pd.isna(curr['rsi']) else 50.0
         
-        # Trend strength check
-        trend_strong = curr['adx'] >= config.ADX_MIN
-        if not trend_strong:
-            return {"setup_found": False, "reason": f"ADX too low ({curr['adx']:.1f} < {config.ADX_MIN})"}
+        # Calculate raw support and resistance levels
+        raw_supports, raw_resistances = calculate_sr_levels(df, window=config.SR_WINDOW)
+        
+        # Cluster levels to consolidate nearby wicks (0.75% default threshold)
+        supports = cluster_levels(raw_supports)
+        resistances = cluster_levels(raw_resistances)
 
-        # --- LONG SIGNAL DETECTION ---
-        if macro_bullish:
-            # 5m Trend confirmation
-            entry_trend_bullish = current_price > curr['ema_fast'] > curr['ema_slow']
+        
+        # Isolate S1 (highest support below current price)
+        supports_below = [s for s in supports if s < current_price]
+        S1 = max(supports_below) if supports_below else df['low'].min()
+        
+        # Isolate R1 (lowest resistance above current price)
+        resistances_above = [r for r in resistances if r > current_price]
+        R1 = min(resistances_above) if resistances_above else df['high'].max()
+        
+        # Calculate ATR-based buffer for Stop Loss and entry triggers
+        atr_buffer = 0.5 * atr_val if not pd.isna(atr_val) else (current_price * 0.005)
+        
+        # Proximity threshold: within config.SR_PROXIMITY_PCT (1.5%) of the level
+        proximity_limit = current_price * config.SR_PROXIMITY_PCT
+        
+        # 1. LONG Opportunity (Price testing or bouncing off Support)
+        dist_to_support = current_price - S1
+        is_near_support = dist_to_support <= proximity_limit
+        
+        if is_near_support:
+            entry = current_price
+            sl = S1 - atr_buffer
+            tp = R1 - atr_buffer
             
-            # Pullback logic: Close is resting near the EMA 20, OR EMA 20 crossed over EMA 50 within the last 3 candles
-            near_ema20 = abs(current_price - curr['ema_fast']) / curr['ema_fast'] <= 0.003
-            in_ema_pocket = curr['ema_slow'] <= current_price <= curr['ema_fast']
-            ema_cross = (prev['ema_fast'] <= prev['ema_slow'] and curr['ema_fast'] > curr['ema_slow']) or \
-                        (prev2['ema_fast'] <= prev2['ema_slow'] and prev['ema_fast'] > prev['ema_slow'])
+            risk = entry - sl
+            reward = tp - entry
+            rrr = reward / risk if risk > 0 else 0
             
-            pullback_confirmed = near_ema20 or in_ema_pocket or ema_cross
-            
-            # RSI momentum space: strong, active, but has room to climb (not overbought)
-            rsi_confirmed = config.RSI_LONG_MIN <= curr['rsi'] <= config.RSI_LONG_MAX
-            
-            # MACD bullish momentum: positive and increasing histogram
-            macd_confirmed = curr['macd_hist'] > 0 and curr['macd_hist'] > prev['macd_hist']
-            
-            if entry_trend_bullish and pullback_confirmed and rsi_confirmed and macd_confirmed:
-                # Dynamic ATR-based Stop Loss (1.5 * ATR below current price)
-                sl = current_price - (atr_value * 1.5)
-                sl_pct = (current_price - sl) / current_price
-                
-                # Enforce Strict Maximum SL Limit
-                if sl_pct > config.MAX_SL_PERCENT:
-                    sl = current_price * (1.0 - config.MAX_SL_PERCENT)
-                    sl_pct = config.MAX_SL_PERCENT
-                
-                # Take Profit based on exact Risk Reward Ratio
-                tp = current_price + (current_price - sl) * config.RISK_REWARD_RATIO
-                
+            if rrr >= config.SR_MIN_RRR:
+                sl_pct = (risk / entry) * 100
                 return {
                     "setup_found": True,
+                    "symbol": symbol,
+                    "timeframe": timeframe,
                     "direction": "LONG",
-                    "symbol": symbol,
-                    "entry_price": current_price,
+                    "entry_price": entry,
                     "tp": tp,
                     "sl": sl,
-                    "sl_pct": sl_pct * 100,
-                    "leverage": config.LEVERAGE,
-                    "rsi": curr['rsi'],
-                    "adx": curr['adx'],
-                    "strategy": "MOMENTUM_PULLBACK_5M"
+                    "sl_pct": sl_pct,
+                    "rrr": rrr,
+                    "rsi": rsi_val,
+                    "support": S1,
+                    "resistance": R1,
+                    "strategy": f"S&R Support Bounce ({timeframe})"
                 }
-
-        # --- SHORT SIGNAL DETECTION ---
-        if macro_bearish:
-            # 5m Trend confirmation
-            entry_trend_bearish = current_price < curr['ema_fast'] < curr['ema_slow']
-            
-            # Pullback logic: Close is resting near the EMA 20, OR EMA 20 crossed below EMA 50 within the last 3 candles
-            near_ema20 = abs(current_price - curr['ema_fast']) / curr['ema_fast'] <= 0.003
-            in_ema_pocket = curr['ema_fast'] <= current_price <= curr['ema_slow']
-            ema_cross = (prev['ema_fast'] >= prev['ema_slow'] and curr['ema_fast'] < curr['ema_slow']) or \
-                        (prev2['ema_fast'] >= prev2['ema_slow'] and prev['ema_fast'] < prev['ema_slow'])
-            
-            pullback_confirmed = near_ema20 or in_ema_pocket or ema_cross
-            
-            # RSI momentum space: strong downward trend, but has room to drop (not oversold)
-            rsi_confirmed = config.RSI_SHORT_MIN <= curr['rsi'] <= config.RSI_SHORT_MAX
-            
-            # MACD bearish momentum: negative and decreasing histogram
-            macd_confirmed = curr['macd_hist'] < 0 and curr['macd_hist'] < prev['macd_hist']
-            
-            if entry_trend_bearish and pullback_confirmed and rsi_confirmed and macd_confirmed:
-                # Dynamic ATR-based Stop Loss (1.5 * ATR above current price)
-                sl = current_price + (atr_value * 1.5)
-                sl_pct = (sl - current_price) / current_price
                 
-                # Enforce Strict Maximum SL Limit
-                if sl_pct > config.MAX_SL_PERCENT:
-                    sl = current_price * (1.0 + config.MAX_SL_PERCENT)
-                    sl_pct = config.MAX_SL_PERCENT
-                
-                # Take Profit based on exact Risk Reward Ratio
-                tp = current_price - (sl - current_price) * config.RISK_REWARD_RATIO
-                
+        # 2. SHORT Opportunity (Price testing or rejecting Resistance)
+        dist_to_resistance = R1 - current_price
+        is_near_resistance = dist_to_resistance <= proximity_limit
+        
+        if is_near_resistance:
+            entry = current_price
+            sl = R1 + atr_buffer
+            tp = S1 + atr_buffer
+            
+            risk = sl - entry
+            reward = entry - tp
+            rrr = reward / risk if risk > 0 else 0
+            
+            if rrr >= config.SR_MIN_RRR:
+                sl_pct = (risk / entry) * 100
                 return {
                     "setup_found": True,
-                    "direction": "SHORT",
                     "symbol": symbol,
-                    "entry_price": current_price,
+                    "timeframe": timeframe,
+                    "direction": "SHORT",
+                    "entry_price": entry,
                     "tp": tp,
                     "sl": sl,
-                    "sl_pct": sl_pct * 100,
-                    "leverage": config.LEVERAGE,
-                    "rsi": curr['rsi'],
-                    "adx": curr['adx'],
-                    "strategy": "MOMENTUM_PULLBACK_5M"
+                    "sl_pct": sl_pct,
+                    "rrr": rrr,
+                    "rsi": rsi_val,
+                    "support": S1,
+                    "resistance": R1,
+                    "strategy": f"S&R Resistance Rejection ({timeframe})"
                 }
-
-        return {"setup_found": False, "reason": "Technical indicators did not align"}
+                
+        return {"setup_found": False, "reason": "No high-probability S&R setups meeting RRR bounds found"}
         
     except Exception as e:
-        print(f"[ERROR] Error analyzing strategy for {symbol}: {e}")
+        print(f"[ERROR] Error analyzing S&R strategy for {symbol} on {timeframe}: {e}")
         return {"setup_found": False, "reason": f"Execution error: {e}"}
+

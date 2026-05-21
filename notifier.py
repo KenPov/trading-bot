@@ -46,20 +46,12 @@ def send_startup_message(assets_count, btc_price):
     )
     send_telegram_message(message)
 
-def send_futures_signal(signal_data):
+def send_futures_digest(signals, btc_price):
     """
-    Sends a premium, highly actionable futures trading alert to Telegram using HTML.
+    Sends a beautiful consolidated futures S&R digest containing all detected setups.
+    If no setups are found, sends a clean status confirmation.
     """
-    direction = signal_data['direction']
-    emoji = "🟢" if direction == "LONG" else "🔴"
-    action = "BUY / LONG" if direction == "LONG" else "SELL / SHORT"
-    symbol = signal_data['symbol']
-    
-    entry = signal_data['entry_price']
-    tp = signal_data['tp']
-    sl = signal_data['sl']
-    
-    # Elegant decimal formatting based on price scale
+    # Price formatting helper based on currency scale
     def fmt_price(val):
         if val > 100:
             return f"{val:.2f}"
@@ -68,19 +60,62 @@ def send_futures_signal(signal_data):
         else:
             return f"{val:.6f}"
             
-    message = (
-        f"🔥 <b>FUTURES PRO SNIPER ALERT</b> 🔥\n\n"
-        f"📈 <b>Asset:</b> <code>{symbol}</code>\n"
-        f"🎯 <b>Action:</b> {emoji} <b>{action}</b>\n"
-        f"⚡️ <b>Leverage:</b> <code>Cross {signal_data['leverage']}x</code> (Recommended)\n\n"
-        f"📥 <b>Entry Limit:</b> <code>{fmt_price(entry)}</code>\n"
-        f"💰 <b>Take Profit (TP):</b> <code>{fmt_price(tp)}</code> (Risk-Reward 1:{config.RISK_REWARD_RATIO:.1f})\n"
-        f"🛑 <b>Stop Loss (SL):</b> <code>{fmt_price(sl)}</code> (-{signal_data['sl_pct']:.2f}%)\n\n"
-        f"📊 <b>Signal Parameters:</b>\n"
-        f"• ADX Trend Strength: <code>{signal_data['adx']:.1f}</code>\n"
-        f"• RSI Strength: <code>{signal_data['rsi']:.1f}</code>\n"
-        f"• System Logic: <code>5m Momentum Trend Pullback</code>\n\n"
-        f"⚠️ <i>Configure SL and TP order conditions immediately in your futures broker!</i>"
+    if not signals:
+        message = (
+            f"🤖 <b>FUTURES S&R SCAN COMPLETE</b> 🤖\n\n"
+            f"💰 <b>Current BTC Price:</b> ${btc_price:,.2f}\n"
+            f"ℹ️ <i>No high-probability Support & Resistance setups met the RRR & proximity bounds in this scan.</i>"
+        )
+        send_telegram_message(message)
+        return
+
+    # Compile the digest header
+    header = (
+        f"🔥 <b>FUTURES S&R SNIPER DIGEST</b> 🔥\n"
+        f"🌐 <b>Exchange Engine:</b> MEXC (1H & 4H Charts)\n"
+        f"💰 <b>Current BTC Price:</b> ${btc_price:,.2f}\n"
+        f"📈 <b>Found:</b> <code>{len(signals)} Key Setup(s)</code>\n"
+        f"-----------------------------------------\n\n"
     )
     
-    send_telegram_message(message)
+    body_blocks = []
+    for sig in signals:
+        symbol = sig['symbol']
+        tf = sig['timeframe']
+        direction = sig['direction']
+        emoji = "🟢" if direction == "LONG" else "🔴"
+        action = "BUY/LONG" if direction == "LONG" else "SELL/SHORT"
+        
+        entry = sig['entry_price']
+        tp = sig['tp']
+        sl = sig['sl']
+        sl_pct = sig['sl_pct']
+        rrr = sig['rrr']
+        support = sig['support']
+        resistance = sig['resistance']
+        
+        block = (
+            f"{emoji} <b>{symbol} ({tf})</b> | <b>{action}</b>\n"
+            f"📥 <b>Entry:</b> <code>{fmt_price(entry)}</code>\n"
+            f"🛑 <b>SL:</b> <code>{fmt_price(sl)}</code> (-{sl_pct:.2f}%)\n"
+            f"🎯 <b>TP:</b> <code>{fmt_price(tp)}</code> (Risk-Reward 1:{rrr:.1f})\n"
+            f"📊 <b>Levels:</b> Sup <code>{fmt_price(support)}</code> | Res <code>{fmt_price(resistance)}</code>\n"
+        )
+        body_blocks.append(block)
+        
+    footer = (
+        f"-----------------------------------------\n"
+        f"⚠️ <i>Verify charts & set broker SL/TP orders immediately!</i>"
+    )
+    
+    # Build and split message if it exceeds Telegram limits (4096 characters)
+    current_message = header
+    for block in body_blocks:
+        if len(current_message) + len(block) + len(footer) > 4000:
+            send_telegram_message(current_message + footer)
+            current_message = header + "\n(Continued...)\n\n" + block
+        else:
+            current_message += block + "\n"
+            
+    send_telegram_message(current_message + footer)
+
