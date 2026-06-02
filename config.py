@@ -6,7 +6,7 @@ load_dotenv()
 
 # Telegram Credentials
 # Fallback to the user's hardcoded credentials, but prioritize environment variables
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8736079728:AAG-lenOZTBEaYN6VzV8YIGipDgtFwgq-G8")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8283703189:AAEhB5bvW2cjdfWnk1Z_tZwaLAW1Jjz_MVs")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003708562178")
 
 # Scanning Configuration
